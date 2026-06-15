@@ -1,0 +1,261 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["georgette"]
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum EntityType {
+  SOURCE
+  CLAIM
+  PERSON
+  PLACE
+  EVENT
+  CONTRADICTION
+  MANUSCRIPT_REFERENCE
+  TAG
+  EVIDENCE_LINK
+  FILE
+
+  @@schema("georgette")
+}
+
+enum RelationshipType {
+  SUPPORTS
+  CONTRADICTS
+  QUALIFIES
+  MENTIONS
+  DERIVED_FROM
+  AUTHOR_OF
+  WITNESS_TO
+  PARTICIPATED_IN
+  RESCUED
+  RESCUED_BY
+  CAPTAIN_OF
+  CREW_OF
+  PASSENGER_ON
+  OCCURRED_AT
+  OCCURRED_BEFORE
+  OCCURRED_AFTER
+  ABOUT
+  REFERENCED_IN
+  LOCATED_AT
+  PART_OF
+  RELATED_TO
+
+  @@schema("georgette")
+}
+
+enum ClaimStatus {
+  DRAFT
+  ACTIVE
+  DISPUTED
+  SUPERSEDED
+  ARCHIVED
+
+  @@schema("georgette")
+}
+
+enum ConfidenceLevel {
+  LOW
+  MEDIUM
+  HIGH
+
+  @@schema("georgette")
+}
+
+enum EvidenceRelationship {
+  SUPPORTS
+  CONTRADICTS
+  QUALIFIES
+  MENTIONS
+
+  @@schema("georgette")
+}
+
+// ─── Core tables ─────────────────────────────────────────────────────────────
+
+model Source {
+  sourceId                   String   @id @map("source_id")
+  currentFileName            String?  @map("current_file_name")
+  suggestedStandardFileName  String?  @map("suggested_standard_file_name")
+  documentType               String?  @map("document_type")
+  category                   String?
+  originalOrDerived          String?  @map("original_or_derived")
+  importance                 String?
+  notes                      String?
+  parentSourceId             String?  @map("parent_source_id")
+  sourceLevel                Int?     @map("source_level")
+  createdAt                  DateTime @default(now()) @map("created_at")
+  updatedAt                  DateTime @updatedAt @map("updated_at")
+
+  parent   Source?  @relation("SourceHierarchy", fields: [parentSourceId], references: [sourceId])
+  children Source[] @relation("SourceHierarchy")
+  files    File[]
+  evidence EvidenceLink[]
+
+  @@map("sources")
+  @@schema("georgette")
+}
+
+model File {
+  fileId    String   @id @default(cuid()) @map("file_id")
+  sourceId  String?  @map("source_id")
+  filePath  String?  @map("file_path")
+  fileName  String?  @map("file_name")
+  mimeType  String?  @map("mime_type")
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  source Source? @relation(fields: [sourceId], references: [sourceId])
+
+  @@map("files")
+  @@schema("georgette")
+}
+
+model Claim {
+  claimId    String           @id @default(cuid()) @map("claim_id")
+  claimText  String           @map("claim_text")
+  topic      String?
+  status     ClaimStatus      @default(DRAFT)
+  confidence ConfidenceLevel  @default(LOW)
+  notes      String?
+  createdAt  DateTime         @default(now()) @map("created_at")
+  updatedAt  DateTime         @updatedAt @map("updated_at")
+
+  evidence              EvidenceLink[]
+  contradictionsAsA     Contradiction[] @relation("ContradictionClaimA")
+  contradictionsAsB     Contradiction[] @relation("ContradictionClaimB")
+  manuscriptReferences  ManuscriptReference[]
+
+  @@map("claims")
+  @@schema("georgette")
+}
+
+model EvidenceLink {
+  evidenceId   String               @id @default(cuid()) @map("evidence_id")
+  claimId      String               @map("claim_id")
+  sourceId     String               @map("source_id")
+  relationship EvidenceRelationship @default(SUPPORTS)
+  pageOrFolio  String?              @map("page_or_folio")
+  quote        String?
+  notes        String?
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+
+  claim  Claim  @relation(fields: [claimId], references: [claimId], onDelete: Restrict)
+  source Source @relation(fields: [sourceId], references: [sourceId], onDelete: Restrict)
+
+  @@map("evidence_links")
+  @@schema("georgette")
+}
+
+model Person {
+  personId   String   @id @default(cuid()) @map("person_id")
+  name       String
+  birthDate  String?  @map("birth_date")
+  deathDate  String?  @map("death_date")
+  role       String?
+  notes      String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("people")
+  @@schema("georgette")
+}
+
+model Place {
+  placeId   String   @id @default(cuid()) @map("place_id")
+  name      String
+  latitude  Float?
+  longitude Float?
+  placeType String?  @map("place_type")
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("places")
+  @@schema("georgette")
+}
+
+model Event {
+  eventId     String   @id @default(cuid()) @map("event_id")
+  title       String
+  eventDate   String?  @map("event_date")
+  description String?
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("events")
+  @@schema("georgette")
+}
+
+model Contradiction {
+  contradictionId String  @id @default(cuid()) @map("contradiction_id")
+  claimAId        String  @map("claim_a_id")
+  claimBId        String  @map("claim_b_id")
+  description     String?
+  status          String? @default("open")
+  resolutionNotes String? @map("resolution_notes")
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  claimA Claim @relation("ContradictionClaimA", fields: [claimAId], references: [claimId], onDelete: Restrict)
+  claimB Claim @relation("ContradictionClaimB", fields: [claimBId], references: [claimId], onDelete: Restrict)
+
+  @@map("contradictions")
+  @@schema("georgette")
+}
+
+model ManuscriptReference {
+  manuscriptRefId    String   @id @default(cuid()) @map("manuscript_ref_id")
+  referenceText      String?  @map("reference_text")
+  manuscriptLocation String?  @map("manuscript_location")
+  page               String?
+  claimId            String?  @map("claim_id")
+  notes              String?
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  claim Claim? @relation(fields: [claimId], references: [claimId])
+
+  @@map("manuscript_references")
+  @@schema("georgette")
+}
+
+model Tag {
+  tagId     String   @id @default(cuid()) @map("tag_id")
+  name      String   @unique
+  color     String?
+  notes     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("tags")
+  @@schema("georgette")
+}
+
+model Relationship {
+  relationshipId   String           @id @default(cuid()) @map("relationship_id")
+  fromEntityType   EntityType       @map("from_entity_type")
+  fromEntityId     String           @map("from_entity_id")
+  relationshipType RelationshipType @map("relationship_type")
+  toEntityType     EntityType       @map("to_entity_type")
+  toEntityId       String           @map("to_entity_id")
+  confidence       ConfidenceLevel?
+  notes            String?
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  @@index([fromEntityType, fromEntityId])
+  @@index([toEntityType, toEntityId])
+  @@map("relationships")
+  @@schema("georgette")
+}

@@ -1,0 +1,24 @@
+---
+description: Database safety — never reset or wipe historian research data
+globs: prisma/**,package.json,README.md
+alwaysApply: true
+---
+
+# Database safety — NO RESETS
+
+This is a historian's research database. **Never reset, wipe, or drop data.**
+
+## Forbidden commands (never run, suggest, or script)
+
+- `prisma migrate reset`
+- `prisma migrate dev` (prompts for reset on drift)
+- `prisma db push` (can destructive-sync schema)
+- Any SQL with `DROP`, `TRUNCATE`, or bulk `DELETE` on georgette tables
+
+## Safe commands only
+
+- **Apply migrations:** `npm run db:migrate` → `prisma migrate deploy` (additive, no reset)
+- **Generate client:** `npm run db:generate`
+- **New migration:** write SQL manually or use `prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --script`, review, then `npm run db:migrate`
+
+Migrations must be additive (`CREATE`, `ALTER ADD`). Existing research records must be preserved.
