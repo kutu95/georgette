@@ -4,7 +4,7 @@
 # Typical path: ~/.cloudflared/config.yml or /etc/cloudflared/config.yml
 #
 #   ingress:
-#     - hostname: research.margies.app
+#     - hostname: georgette.margies.app
 #       service: http://127.0.0.1:3010
 #     - hostname: metal.margies.app
 #       service: http://127.0.0.1:3009
@@ -14,6 +14,6 @@
 #   sudo systemctl restart cloudflared
 #
 # In Cloudflare Dashboard → Zero Trust → Networks → Tunnels → Public Hostname:
-#   Subdomain: research
+#   Subdomain: georgette
 #   Domain: margies.app
 #   Service: http://localhost:3010

@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SERVER_HOST="${DEPLOY_HOST:-192.168.0.146}"
-SERVER_USER="${DEPLOY_USER:-ubuntu}"
+SERVER_USER="${DEPLOY_USER:-john}"
 KEY="$HOME/.ssh/georgette_deploy"
 
 if [[ ! -f "${KEY}" ]]; then
@@ -19,4 +19,4 @@ echo "==> Deploying Georgette Research"
 DEPLOY_HOST="${SERVER_HOST}" DEPLOY_USER="${SERVER_USER}" SSH_IDENTITY_FILE="${KEY}" \
   bash "$(dirname "$0")/deploy-server.sh" --remote
 
-echo "==> Done. Open https://research.margies.app"
+echo "==> Done. Open https://georgette.margies.app"

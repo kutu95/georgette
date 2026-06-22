@@ -10,7 +10,7 @@ APP_DIR="/var/www/georgette-research"
 REPO_URL="https://github.com/kutu95/georgette.git"
 APP_PORT="3010"
 SERVER_HOST="${DEPLOY_HOST:-192.168.0.146}"
-SERVER_USER="${DEPLOY_USER:-ubuntu}"
+SERVER_USER="${DEPLOY_USER:-john}"
 SSH_IDENTITY="${SSH_IDENTITY_FILE:-$HOME/.ssh/georgette_deploy}"
 SSH_OPTS=(-o StrictHostKeyChecking=no)
 if [[ -f "${SSH_IDENTITY}" ]]; then
@@ -50,7 +50,7 @@ deploy_on_server() {
   echo "==> Verifying app on port ${APP_PORT}"
   curl -sf "http://127.0.0.1:${APP_PORT}/api/health" | head -c 200
   echo
-  echo "==> Done. Configure Cloudflare tunnel for research.margies.app → localhost:${APP_PORT}"
+  echo "==> Done. Configure Cloudflare tunnel for georgette.margies.app → localhost:${APP_PORT}"
 }
 
 if [[ "${1:-}" == "--remote" ]]; then
@@ -84,10 +84,10 @@ pm2 save
 curl -sf "http://127.0.0.1:${APP_PORT}/api/health"
 echo
 
-# Ensure Cloudflare tunnel routes research.margies.app → this app
-if [[ -f /etc/cloudflared/config.yml ]] && ! grep -q "research.margies.app" /etc/cloudflared/config.yml; then
-  echo "NOTE: Add research.margies.app → http://127.0.0.1:3010 to /etc/cloudflared/config.yml"
-  echo "      See deploy/cloudflared-research.yml in the repo, then: sudo systemctl restart cloudflared"
+# Ensure Cloudflare tunnel routes georgette.margies.app → this app
+if [[ -f /etc/cloudflared/config.yml ]] && ! grep -q "georgette.margies.app" /etc/cloudflared/config.yml; then
+  echo "NOTE: Add georgette.margies.app → http://127.0.0.1:3010 to /etc/cloudflared/config.yml"
+  echo "      See deploy/cloudflared-georgette.yml in the repo, then: sudo systemctl restart cloudflared"
 fi
 REMOTE
 else

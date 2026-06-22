@@ -83,7 +83,7 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173).
 
-## Production deployment (research.margies.app)
+## Production deployment (georgette.margies.app)
 
 The app runs on the home Ubuntu server (`192.168.0.146`) behind Cloudflare Tunnel, same pattern as `metal.margies.app`.
 
@@ -91,7 +91,7 @@ The app runs on the home Ubuntu server (`192.168.0.146`) behind Cloudflare Tunne
 |---------|-------|
 | Server path | `/var/www/georgette-research` |
 | App port | **3010** |
-| Public URL | https://research.margies.app |
+| Public URL | https://georgette.margies.app |
 | Process manager | PM2 (`georgette-research`) |
 | Database | `postgresql://postgres:postgres@127.0.0.1:54322/postgres` |
 
@@ -120,14 +120,14 @@ cd /var/www/georgette-research
 
 ### Cloudflare Tunnel
 
-DNS for `research.margies.app` is already in Cloudflare. Ensure the tunnel ingress includes:
+DNS for `georgette.margies.app` should point via Cloudflare Tunnel. Ensure the tunnel ingress includes:
 
 ```yaml
-- hostname: research.margies.app
+- hostname: georgette.margies.app
   service: http://127.0.0.1:3010
 ```
 
-See `deploy/cloudflared-research.yml` for full notes. After editing `/etc/cloudflared/config.yml`:
+See `deploy/cloudflared-georgette.yml` for full notes. After editing `/etc/cloudflared/config.yml`:
 
 ```bash
 sudo systemctl restart cloudflared
@@ -137,7 +137,7 @@ sudo systemctl restart cloudflared
 
 ```bash
 curl -s http://127.0.0.1:3010/api/health   # on server
-curl -s https://research.margies.app/api/health
+curl -s https://georgette.margies.app/api/health
 pm2 logs georgette-research --lines 30 --nostream
 ```
 
