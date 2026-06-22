@@ -14,6 +14,7 @@ import { claimsRouter } from "./routes/claims.js";
 import { evidenceRouter } from "./routes/evidence.js";
 import { observationsRouter } from "./routes/observations.js";
 import { shipFeaturesRouter } from "./routes/shipFeatures.js";
+import { documentsRouter, registerSourceDocumentRoutes } from "./routes/documents.js";
 import { seedTier1Claims } from "./seedTier1Claims.js";
 import { seedShipFeatures } from "./seedShipFeatures.js";
 
@@ -39,7 +40,10 @@ app.get("/api/health", async (_req, res) => {
   });
 });
 
+registerSourceDocumentRoutes(sourcesRouter);
 app.use("/api/sources", sourcesRouter);
+
+app.use("/api/documents", documentsRouter);
 
 app.get("/api/stats", async (_req, res) => {
   try {

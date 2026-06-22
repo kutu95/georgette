@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api, type EvidenceLinkRecord, type ObservationRecord, type SourceRecord } from "../lib/api";
+import { api, type EvidenceLinkRecord, type ObservationRecord, type SourceDocumentRecord, type SourceRecord } from "../lib/api";
 import { CreateClaimFromSourceForm } from "../components/CreateClaimFromSourceForm";
 import { ObservationForm } from "../components/ObservationForm";
+import { SourceDocumentsPanel } from "../components/SourceDocumentsPanel";
 import { RelationshipBadge } from "../components/RelationshipBadge";
 import { formatObservationConfidence } from "../lib/format";
 import { sourceConfig } from "../lib/entities";
@@ -24,6 +25,7 @@ export function SourceDetailPage() {
   const [source, setSource] = useState<SourceRecord | null>(null);
   const [referencedBy, setReferencedBy] = useState<EvidenceLinkRecord[]>([]);
   const [observations, setObservations] = useState<ObservationRecord[]>([]);
+  const [documents, setDocuments] = useState<SourceDocumentRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -37,14 +39,16 @@ export function SourceDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const [data, refs, obs] = await Promise.all([
+      const [data, refs, obs, docs] = await Promise.all([
         api.getSource(id),
         api.getSourceReferencedBy(id),
         api.getSourceObservations(id),
+        api.getSourceDocuments(id),
       ]);
       setSource(data);
       setReferencedBy(refs);
       setObservations(obs);
+      setDocuments(docs);
       setForm({ ...data });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load source");
@@ -307,6 +311,12 @@ export function SourceDetailPage() {
           )}
         </dl>
       )}
+
+      <SourceDocumentsPanel
+        sourceId={source.sourceId}
+        documents={documents}
+        onChange={load}
+      />
 
       <section className="mt-10">
         <div className="mb-4 flex items-center justify-between gap-4">

@@ -9,6 +9,7 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         PORT: "3010",
+        STORAGE_PATH: "/var/www/georgette-research/storage",
       },
     },
   ],

@@ -14,6 +14,7 @@ const REQUIRED_MODELS = [
   "place",
   "event",
   "contradiction",
+  "file",
 ] as const;
 
 const globalForPrisma = globalThis as unknown as {

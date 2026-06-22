@@ -15,6 +15,37 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return data as T;
 }
 
+export type SourceDocumentRecord = {
+  fileId: string;
+  sourceId: string | null;
+  filePath: string | null;
+  fileName: string | null;
+  mimeType: string | null;
+  documentKind: string;
+  pageNumber: number | null;
+  sortOrder: number;
+  groupLabel: string | null;
+  parentFileId: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CombinedOcrResult = {
+  sourceId: string;
+  text: string;
+  pageCount: number;
+  pageFileIds: string[];
+};
+
+export type SourceDocumentUploadMeta = {
+  documentKind?: string;
+  pageNumber?: number;
+  sortOrder?: number;
+  groupLabel?: string;
+  notes?: string;
+};
+
 export type SourceRecord = {
   sourceId: string;
   currentFileName: string | null;
@@ -329,6 +360,68 @@ export const api = {
     request<ObservationRecord>(`/observations/${encodeURIComponent(id)}`),
   getSourceObservations: (id: string) =>
     request<ObservationRecord[]>(`/sources/${encodeURIComponent(id)}/observations`),
+  getSourceDocuments: (id: string) =>
+    request<SourceDocumentRecord[]>(`/sources/${encodeURIComponent(id)}/documents`),
+  getSourceCombinedOcr: (sourceId: string) =>
+    request<CombinedOcrResult>(`/sources/${encodeURIComponent(sourceId)}/documents/combined-ocr`),
+  uploadSourceDocument: async (
+    sourceId: string,
+    file: File,
+    meta: SourceDocumentUploadMeta = {},
+  ) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (meta.documentKind) form.append("documentKind", meta.documentKind);
+    if (meta.pageNumber != null) form.append("pageNumber", String(meta.pageNumber));
+    if (meta.sortOrder != null) form.append("sortOrder", String(meta.sortOrder));
+    if (meta.groupLabel) form.append("groupLabel", meta.groupLabel);
+    if (meta.notes) form.append("notes", meta.notes);
+    const res = await fetch(`${API_BASE}/sources/${encodeURIComponent(sourceId)}/documents`, {
+      method: "POST",
+      body: form,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Upload failed");
+    return data as SourceDocumentRecord;
+  },
+  uploadSourceDocumentBatch: async (
+    sourceId: string,
+    files: File[],
+    meta: SourceDocumentUploadMeta = {},
+  ) => {
+    const form = new FormData();
+    for (const file of files) form.append("files", file);
+    if (meta.documentKind) form.append("documentKind", meta.documentKind);
+    if (meta.pageNumber != null) form.append("pageNumber", String(meta.pageNumber));
+    if (meta.groupLabel) form.append("groupLabel", meta.groupLabel);
+    if (meta.notes) form.append("notes", meta.notes);
+    const res = await fetch(`${API_BASE}/sources/${encodeURIComponent(sourceId)}/documents/batch`, {
+      method: "POST",
+      body: form,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Batch upload failed");
+    return data as { items: SourceDocumentRecord[] };
+  },
+  createSourceTextDocument: (
+    sourceId: string,
+    body: {
+      text: string;
+      fileName?: string;
+      notes?: string;
+      documentKind?: string;
+      pageNumber?: number;
+      groupLabel?: string;
+    },
+  ) =>
+    request<SourceDocumentRecord>(`/sources/${encodeURIComponent(sourceId)}/documents`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  removeDocument: (fileId: string) =>
+    request<void>(`/documents/${encodeURIComponent(fileId)}`, { method: "DELETE" }),
+  documentContentUrl: (fileId: string, download = false) =>
+    `${API_BASE}/documents/${encodeURIComponent(fileId)}/content${download ? "?download=1" : ""}`,
   createObservationClaimLink: (
     observationId: string,
     body: { claimId: string; relationshipType?: string },

@@ -163,3 +163,13 @@ source_id,current_file_name,suggested_standard_file_name,document_type,category,
 Uses your existing PostgreSQL database with a separate `georgette` schema — no new database is created.
 
 Tables: `sources`, `files`, `claims`, `people`, `places`, `events`, `contradictions`, `manuscript_references`, `tags`, `relationships`, `evidence_links`.
+
+## Source documents
+
+Each source can have many **typed documents**: PDFs, page images, OCR text (per page), summaries, Word files, plain text, etc.
+
+- Set **document type** and optional **page number** on upload
+- **Batch upload** multiple pages — each file gets the next page number (images or OCR)
+- **OCR pages** are automatically **combined in page order** into a single combined OCR document
+- Optional **group label** clusters related files (e.g. one survey across many pages)
+- Files stored under `storage/documents/` (`STORAGE_PATH`); metadata in `georgette.files`

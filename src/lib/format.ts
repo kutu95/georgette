@@ -104,3 +104,34 @@ export function truncateCell(text: string | null | undefined, max = 60): string 
   if (!text) return "—";
   return truncate(text, max);
 }
+
+export function formatDocumentKind(
+  documentKind: string | null | undefined,
+  mimeType?: string | null,
+): string {
+  if (documentKind && documentKind !== "OTHER") {
+    const labels: Record<string, string> = {
+      PDF: "PDF",
+      IMAGE: "Image / scan",
+      DOCX: "Word document",
+      TEXT: "Plain text",
+      OCR: "OCR text",
+      SUMMARY: "Summary",
+      ORIGINAL: "Original",
+      COMBINED_OCR: "Combined OCR",
+      OTHER: "Other",
+    };
+    return labels[documentKind] ?? documentKind;
+  }
+  if (!mimeType) return "Document";
+  if (mimeType === "application/pdf") return "PDF";
+  if (mimeType.startsWith("image/")) return "Image";
+  if (mimeType.startsWith("text/")) return "Text";
+  if (mimeType.includes("word")) return "Word document";
+  return "Document";
+}
+
+export function formatPageLabel(pageNumber: number | null | undefined): string {
+  if (pageNumber == null) return "";
+  return `Page ${pageNumber}`;
+}

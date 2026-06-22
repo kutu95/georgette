@@ -152,6 +152,20 @@ enum ShipFeatureRelationship {
   @@schema("georgette")
 }
 
+enum DocumentKind {
+  PDF
+  IMAGE
+  DOCX
+  TEXT
+  OCR
+  SUMMARY
+  ORIGINAL
+  COMBINED_OCR
+  OTHER
+
+  @@schema("georgette")
+}
+
 // ─── Core tables ─────────────────────────────────────────────────────────────
 
 model Source {
@@ -179,17 +193,25 @@ model Source {
 }
 
 model File {
-  fileId    String   @id @default(cuid()) @map("file_id")
-  sourceId  String?  @map("source_id")
-  filePath  String?  @map("file_path")
-  fileName  String?  @map("file_name")
-  mimeType  String?  @map("mime_type")
-  notes     String?
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  fileId       String       @id @default(cuid()) @map("file_id")
+  sourceId     String?      @map("source_id")
+  filePath     String?      @map("file_path")
+  fileName     String?      @map("file_name")
+  mimeType     String?      @map("mime_type")
+  documentKind DocumentKind @default(OTHER) @map("document_kind")
+  pageNumber   Int?         @map("page_number")
+  sortOrder    Int          @default(0) @map("sort_order")
+  groupLabel   String?      @map("group_label")
+  parentFileId String?      @map("parent_file_id")
+  notes        String?
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
 
-  source Source? @relation(fields: [sourceId], references: [sourceId])
+  source   Source? @relation(fields: [sourceId], references: [sourceId])
+  parent   File?   @relation("FileHierarchy", fields: [parentFileId], references: [fileId], onDelete: SetNull)
+  children File[]  @relation("FileHierarchy")
 
+  @@index([sourceId, documentKind, pageNumber])
   @@map("files")
   @@schema("georgette")
 }
