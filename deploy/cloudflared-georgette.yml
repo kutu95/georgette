@@ -1,7 +1,8 @@
 # Add this ingress rule to the existing cloudflared config on the home server
 # (same tunnel that serves metal.margies.app).
 #
-# Typical path: ~/.cloudflared/config.yml or /etc/cloudflared/config.yml
+# Typical path on the home server: /home/john/.cloudflared/config.yml
+# (systemd cloudflared service reads this file — not /etc/cloudflared/config.yml)
 #
 #   ingress:
 #     - hostname: georgette.margies.app

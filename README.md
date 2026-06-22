@@ -127,7 +127,7 @@ DNS for `georgette.margies.app` should point via Cloudflare Tunnel. Ensure the t
   service: http://127.0.0.1:3010
 ```
 
-See `deploy/cloudflared-georgette.yml` for full notes. After editing `/etc/cloudflared/config.yml`:
+See `deploy/cloudflared-georgette.yml` for full notes. On the server, edit `/home/john/.cloudflared/config.yml`, then:
 
 ```bash
 sudo systemctl restart cloudflared

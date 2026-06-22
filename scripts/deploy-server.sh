@@ -85,8 +85,9 @@ curl -sf "http://127.0.0.1:${APP_PORT}/api/health"
 echo
 
 # Ensure Cloudflare tunnel routes georgette.margies.app → this app
-if [[ -f /etc/cloudflared/config.yml ]] && ! grep -q "georgette.margies.app" /etc/cloudflared/config.yml; then
-  echo "NOTE: Add georgette.margies.app → http://127.0.0.1:3010 to /etc/cloudflared/config.yml"
+CLOUDFLARED_CONFIG="${HOME}/.cloudflared/config.yml"
+if [[ -f "${CLOUDFLARED_CONFIG}" ]] && ! grep -q "georgette.margies.app" "${CLOUDFLARED_CONFIG}"; then
+  echo "NOTE: Add georgette.margies.app → http://127.0.0.1:3010 to ${CLOUDFLARED_CONFIG}"
   echo "      See deploy/cloudflared-georgette.yml in the repo, then: sudo systemctl restart cloudflared"
 fi
 REMOTE
