@@ -22,6 +22,7 @@ const navItems = [
   { to: "/manuscript-references", label: "Manuscript Refs" },
   { to: "/tags", label: "Tags" },
   { to: "/relationships", label: "Relationships" },
+  { to: "/upload-document", label: "Upload Document" },
   { to: "/import", label: "Import" },
 ];
 

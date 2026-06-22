@@ -46,6 +46,61 @@ export type SourceDocumentUploadMeta = {
   notes?: string;
 };
 
+export type MatchMethod = "filename" | "content" | "source_id";
+
+export type DocumentMatchCandidate = {
+  sourceId: string;
+  sourceLabel: string;
+  fileId?: string;
+  fileName?: string;
+  documentKind?: string;
+  pageNumber?: number | null;
+  score: number;
+  method: MatchMethod;
+  reason: string;
+};
+
+export type DocumentMatchStatus = "confident" | "ambiguous" | "unmatched";
+
+export type ExistingDocumentMatch = {
+  fileId: string;
+  sourceId: string;
+  sourceLabel: string;
+  fileName: string | null;
+  documentKind: string;
+  pageNumber: number | null;
+  matchType: "filename" | "content" | "both";
+  reason: string;
+};
+
+export type DocumentMatchResult = {
+  fileName: string;
+  mimeType: string;
+  inferredKind: string;
+  inferredPageNumber: number | null;
+  existingDocuments: ExistingDocumentMatch[];
+  status: DocumentMatchStatus;
+  candidates: DocumentMatchCandidate[];
+  recommended: DocumentMatchCandidate | null;
+  contentMatchingAvailable: boolean;
+  contentPreview: string | null;
+};
+
+export type SmartDocumentUploadMeta = SourceDocumentUploadMeta & {
+  sourceId: string;
+  overwriteFileId?: string;
+};
+
+export class SmartDocumentUploadError extends Error {
+  existingDocuments: ExistingDocumentMatch[];
+
+  constructor(message: string, existingDocuments: ExistingDocumentMatch[]) {
+    super(message);
+    this.name = "SmartDocumentUploadError";
+    this.existingDocuments = existingDocuments;
+  }
+}
+
 export type SourceRecord = {
   sourceId: string;
   currentFileName: string | null;
@@ -422,6 +477,41 @@ export const api = {
     request<void>(`/documents/${encodeURIComponent(fileId)}`, { method: "DELETE" }),
   documentContentUrl: (fileId: string, download = false) =>
     `${API_BASE}/documents/${encodeURIComponent(fileId)}/content${download ? "?download=1" : ""}`,
+  analyzeSmartDocumentUpload: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/documents/smart-upload/analyze`, {
+      method: "POST",
+      body: form,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Analysis failed");
+    return data as DocumentMatchResult;
+  },
+  confirmSmartDocumentUpload: async (file: File, meta: SmartDocumentUploadMeta) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("sourceId", meta.sourceId);
+    if (meta.documentKind) form.append("documentKind", meta.documentKind);
+    if (meta.pageNumber != null) form.append("pageNumber", String(meta.pageNumber));
+    if (meta.sortOrder != null) form.append("sortOrder", String(meta.sortOrder));
+    if (meta.groupLabel) form.append("groupLabel", meta.groupLabel);
+    if (meta.notes) form.append("notes", meta.notes);
+    if (meta.overwriteFileId) form.append("overwriteFileId", meta.overwriteFileId);
+    const res = await fetch(`${API_BASE}/documents/smart-upload/confirm`, {
+      method: "POST",
+      body: form,
+    });
+    const data = await res.json();
+    if (res.status === 409) {
+      throw new SmartDocumentUploadError(
+        data.error ?? "Document already exists",
+        (data.existingDocuments ?? []) as ExistingDocumentMatch[],
+      );
+    }
+    if (!res.ok) throw new Error(data.error ?? "Upload failed");
+    return data as SourceDocumentRecord;
+  },
   createObservationClaimLink: (
     observationId: string,
     body: { claimId: string; relationshipType?: string },

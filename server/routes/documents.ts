@@ -3,6 +3,7 @@ import multer from "multer";
 import path from "node:path";
 import type { DocumentKind, Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
+import { analyzeDocumentMatch, findExistingDocuments } from "../documentMatch.js";
 import {
   assembleCombinedOcr,
   documentListOrderBy,
@@ -108,7 +109,169 @@ function buildFileCreateData(
   };
 }
 
+async function persistUploadedFile(
+  sourceId: string,
+  buffer: Buffer,
+  originalName: string,
+  mimeType: string,
+  meta: ReturnType<typeof parseDocumentMetadata>,
+) {
+  const documentKind = meta.documentKind ?? inferDocumentKind(mimeType, originalName);
+  const file = await prisma.file.create({
+    data: buildFileCreateData(sourceId, { ...meta, documentKind }, {
+      fileName: originalName,
+      mimeType,
+      documentKind,
+    }),
+  });
+
+  const storedName = storedFileName(file.fileId, originalName, mimeType);
+  const relativePath = await writeDocumentFile(sourceId, storedName, buffer);
+  const updated = await prisma.file.update({
+    where: { fileId: file.fileId },
+    data: { filePath: relativePath },
+  });
+
+  if (documentKind === "OCR") {
+    await refreshCombinedOcrDocument(sourceId);
+  }
+
+  return updated;
+}
+
+async function overwriteExistingFile(
+  fileId: string,
+  buffer: Buffer,
+  originalName: string,
+  mimeType: string,
+  meta: ReturnType<typeof parseDocumentMetadata>,
+) {
+  const existing = await prisma.file.findUnique({ where: { fileId } });
+  if (!existing) throw new Error("Document to overwrite was not found");
+  if (existing.documentKind === "COMBINED_OCR") {
+    throw new Error("Combined OCR documents cannot be overwritten directly");
+  }
+  if (!existing.sourceId) throw new Error("Document has no linked source");
+
+  const documentKind = meta.documentKind ?? inferDocumentKind(mimeType, originalName);
+  const storedName = storedFileName(fileId, originalName, mimeType);
+  const previousStoredName = existing.filePath ? path.basename(existing.filePath) : null;
+
+  if (previousStoredName && previousStoredName !== storedName) {
+    try {
+      await deleteDocumentFile(existing.sourceId, previousStoredName);
+    } catch (err) {
+      if (!(err instanceof Error && err.message.includes("ENOENT"))) {
+        throw err;
+      }
+    }
+  }
+
+  const relativePath = await writeDocumentFile(existing.sourceId, storedName, buffer);
+  const updated = await prisma.file.update({
+    where: { fileId },
+    data: {
+      fileName: originalName,
+      mimeType,
+      filePath: relativePath,
+      documentKind,
+      pageNumber: meta.pageNumber === undefined ? existing.pageNumber : meta.pageNumber,
+      sortOrder: meta.sortOrder ?? existing.sortOrder,
+      groupLabel: meta.groupLabel === undefined ? existing.groupLabel : meta.groupLabel,
+      notes: meta.notes === undefined ? existing.notes : meta.notes,
+    },
+  });
+
+  if (documentKind === "OCR" || existing.documentKind === "OCR") {
+    await refreshCombinedOcrDocument(existing.sourceId);
+  }
+
+  return updated;
+}
+
 export const documentsRouter = Router();
+
+documentsRouter.post("/smart-upload/analyze", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return sendError(res, 400, "No file uploaded");
+
+    const originalName = req.file.originalname || "document";
+    const mimeType = req.file.mimetype || "application/octet-stream";
+    const result = await analyzeDocumentMatch(req.file.buffer, originalName, mimeType);
+    res.json(result);
+  } catch (err) {
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      return sendError(res, 400, "File exceeds 100 MB limit");
+    }
+    sendError(res, 500, err instanceof Error ? err.message : "Analysis failed");
+  }
+});
+
+documentsRouter.post("/smart-upload/confirm", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return sendError(res, 400, "No file uploaded");
+
+    const sourceId =
+      typeof req.body?.sourceId === "string" ? req.body.sourceId.trim() : "";
+    if (!sourceId) return sendError(res, 400, "sourceId is required");
+
+    const source = await prisma.source.findUnique({ where: { sourceId } });
+    if (!source) return sendError(res, 404, "Source not found");
+
+    const originalName = req.file.originalname || "document";
+    const mimeType = req.file.mimetype || "application/octet-stream";
+    const meta = parseDocumentMetadata(req.body as Record<string, unknown>);
+    const overwriteFileId =
+      typeof req.body?.overwriteFileId === "string" ? req.body.overwriteFileId.trim() : "";
+
+    if (overwriteFileId) {
+      const target = await prisma.file.findUnique({ where: { fileId: overwriteFileId } });
+      if (!target) return sendError(res, 404, "Document to overwrite was not found");
+      if (target.sourceId !== sourceId) {
+        return sendError(res, 400, "Document to overwrite does not belong to the selected source");
+      }
+
+      const updated = await overwriteExistingFile(
+        overwriteFileId,
+        req.file.buffer,
+        originalName,
+        mimeType,
+        meta,
+      );
+      return res.json(updated);
+    }
+
+    const existingDocuments = await findExistingDocuments(
+      req.file.buffer,
+      originalName,
+      mimeType,
+    );
+    const duplicatesOnSource = existingDocuments.filter(
+      (document) => document.sourceId === sourceId,
+    );
+    if (duplicatesOnSource.length > 0) {
+      return res.status(409).json({
+        error: "Document already exists on this source. Choose overwrite or cancel.",
+        existingDocuments: duplicatesOnSource,
+      });
+    }
+
+    const updated = await persistUploadedFile(
+      sourceId,
+      req.file.buffer,
+      originalName,
+      mimeType,
+      meta,
+    );
+
+    res.status(201).json(updated);
+  } catch (err) {
+    if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+      return sendError(res, 400, "File exceeds 100 MB limit");
+    }
+    sendError(res, 500, err instanceof Error ? err.message : "Upload failed");
+  }
+});
 
 documentsRouter.get("/:fileId", async (req, res) => {
   try {
@@ -307,27 +470,13 @@ export function registerSourceDocumentRoutes(sourcesRouter: Router): void {
       if (req.file) {
         const originalName = req.file.originalname || "document";
         const mimeType = req.file.mimetype || "application/octet-stream";
-        const documentKind = meta.documentKind ?? inferDocumentKind(mimeType, originalName);
-
-        const file = await prisma.file.create({
-          data: buildFileCreateData(req.params.id, { ...meta, documentKind }, {
-            fileName: originalName,
-            mimeType,
-            documentKind,
-          }),
-        });
-
-        const storedName = storedFileName(file.fileId, originalName, mimeType);
-        const relativePath = await writeDocumentFile(req.params.id, storedName, req.file.buffer);
-        const updated = await prisma.file.update({
-          where: { fileId: file.fileId },
-          data: { filePath: relativePath },
-        });
-
-        if (documentKind === "OCR") {
-          await refreshCombinedOcrDocument(req.params.id);
-        }
-
+        const updated = await persistUploadedFile(
+          req.params.id,
+          req.file.buffer,
+          originalName,
+          mimeType,
+          meta,
+        );
         return res.status(201).json(updated);
       }
 

@@ -12,6 +12,7 @@ import { ObservationDetailPage } from "./pages/ObservationDetailPage";
 import { ShipFeaturesPage } from "./pages/ShipFeaturesPage";
 import { ShipFeatureDetailPage } from "./pages/ShipFeatureDetailPage";
 import { EvidenceLinksPage } from "./pages/EvidenceLinksPage";
+import { SmartDocumentUploadPage } from "./pages/SmartDocumentUploadPage";
 import {
   peopleConfig,
   placesConfig,
@@ -54,6 +55,7 @@ function App() {
           element={<EntityCrudPage config={relationshipsConfig} />}
         />
         <Route path="import" element={<ImportPage />} />
+        <Route path="upload-document" element={<SmartDocumentUploadPage />} />
       </Route>
     </Routes>
   );
