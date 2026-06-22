@@ -1,0 +1,19 @@
+# Add this ingress rule to the existing cloudflared config on the home server
+# (same tunnel that serves metal.margies.app).
+#
+# Typical path: ~/.cloudflared/config.yml or /etc/cloudflared/config.yml
+#
+#   ingress:
+#     - hostname: research.margies.app
+#       service: http://127.0.0.1:3010
+#     - hostname: metal.margies.app
+#       service: http://127.0.0.1:3009
+#     - service: http_status:404
+#
+# After editing:
+#   sudo systemctl restart cloudflared
+#
+# In Cloudflare Dashboard → Zero Trust → Networks → Tunnels → Public Hostname:
+#   Subdomain: research
+#   Domain: margies.app
+#   Service: http://localhost:3010

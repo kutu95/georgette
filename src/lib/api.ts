@@ -15,6 +15,284 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return data as T;
 }
 
+export type SourceRecord = {
+  sourceId: string;
+  currentFileName: string | null;
+  suggestedStandardFileName: string | null;
+  documentType: string | null;
+  category: string | null;
+  originalOrDerived: string | null;
+  importance: string | null;
+  notes: string | null;
+  parentSourceId: string | null;
+  sourceLevel: number | null;
+  createdAt: string;
+  updatedAt: string;
+  parent?: { sourceId: string; currentFileName: string | null } | null;
+  children?: { sourceId: string; currentFileName: string | null }[];
+};
+
+export type SourceSearchParams = {
+  q?: string;
+  category?: string;
+  importance?: string;
+  originalOrDerived?: string;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+};
+
+export type SourceSearchResult = {
+  items: SourceRecord[];
+  total: number;
+  filtered: number;
+};
+
+export type SourceFilterOptions = {
+  categories: string[];
+  importances: string[];
+  originalOrDerived: string[];
+};
+
+export type ClaimRecord = {
+  claimId: string;
+  claimText: string;
+  topic: string | null;
+  claimTier: string;
+  status: string;
+  confidence: string;
+  evidenceRequirements: string | null;
+  researchQuestions: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EvidenceLinkRecord = {
+  evidenceId: string;
+  claimId: string;
+  sourceId: string;
+  relationship: string;
+  pageOrFolio: string | null;
+  quote: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  claim?: {
+    claimId: string;
+    claimText: string;
+    status: string;
+    confidence: string;
+  };
+  source?: {
+    sourceId: string;
+    currentFileName: string | null;
+    suggestedStandardFileName: string | null;
+    category: string | null;
+    importance: string | null;
+    documentType: string | null;
+  };
+};
+
+export type EvidenceSearchParams = {
+  relationship?: string;
+  sourceCategory?: string;
+  sourceImportance?: string;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+};
+
+export type EvidenceSearchResult = {
+  items: EvidenceLinkRecord[];
+  total: number;
+  filtered: number;
+};
+
+export type EvidenceFilterOptions = {
+  relationships: string[];
+  sourceCategories: string[];
+  sourceImportances: string[];
+};
+
+export type ObservationRecord = {
+  observationId: string;
+  sourceId: string;
+  observationText: string;
+  pageOrFolio: string | null;
+  quote: string | null;
+  notes: string | null;
+  confidence: string;
+  createdAt: string;
+  updatedAt: string;
+  source?: {
+    sourceId: string;
+    currentFileName: string | null;
+    suggestedStandardFileName: string | null;
+    category: string | null;
+    importance: string | null;
+    documentType: string | null;
+    originalOrDerived?: string | null;
+  };
+  claimLinks?: ObservationClaimLinkRecord[];
+};
+
+export type ObservationClaimLinkRecord = {
+  linkId: string;
+  observationId: string;
+  claimId: string;
+  relationshipType: string;
+  createdAt: string;
+  updatedAt: string;
+  claim?: {
+    claimId: string;
+    claimText: string;
+    status: string;
+    confidence: string;
+    claimTier?: string;
+  };
+  observation?: ObservationRecord;
+};
+
+export type ShipFeatureRecord = {
+  featureId: string;
+  featureName: string;
+  category: string;
+  description: string | null;
+  status: string;
+  confidence: string;
+  visualImpact: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  observationLinks?: ObservationShipFeatureLinkRecord[];
+};
+
+export type ObservationShipFeatureLinkRecord = {
+  linkId: string;
+  observationId: string;
+  featureId: string;
+  relationshipType: string;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  feature?: {
+    featureId: string;
+    featureName: string;
+    status: string;
+    confidence: string;
+    visualImpact: string;
+    category: string;
+  };
+  observation?: ObservationRecord;
+};
+
+export type ShipFeatureSearchParams = {
+  q?: string;
+  category?: string;
+  status?: string;
+  confidence?: string;
+  visualImpact?: string;
+  withoutEvidence?: string;
+};
+
+export type ShipFeatureSearchResult = {
+  items: ShipFeatureRecord[];
+  total: number;
+  filtered: number;
+};
+
+export type ObservationSearchParams = {
+  q?: string;
+  sourceId?: string;
+  confidence?: string;
+  unlinked?: string;
+  excludeClaimId?: string;
+  excludeFeatureId?: string;
+};
+
+export type ObservationSearchResult = {
+  items: ObservationRecord[];
+  total: number;
+  filtered: number;
+};
+
+export type Stats = {
+  sources: number;
+  claims: number;
+  evidenceLinks: number;
+  observations: number;
+  people: number;
+  places: number;
+  events: number;
+  contradictions: number;
+  topCategories: { name: string; count: number }[];
+  tier1: {
+    total: number;
+    supported: number;
+    underInvestigation: number;
+    unresolved: number;
+  };
+  observationsQuality: {
+    total: number;
+    withoutClaims: number;
+    claimsWithoutObservations: number;
+  };
+  shipReconstruction: {
+    total: number;
+    confirmed: number;
+    probable: number;
+    possible: number;
+    rejected: number;
+    criticalVisual: number;
+    criticalWithoutEvidence: number;
+  };
+  warnings?: string[];
+};
+
+export type ClaimSearchParams = {
+  q?: string;
+  status?: string;
+  topic?: string;
+  tier?: string;
+  confidence?: string;
+};
+
+export type ClaimSearchResult = {
+  items: ClaimRecord[];
+  total: number;
+  filtered: number;
+};
+
+function toQuery(params: Record<string, string | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) search.set(key, value);
+  }
+  const qs = search.toString();
+  return qs ? `?${qs}` : "";
+}
+
+function sourceToQuery(params: SourceSearchParams): string {
+  const search = new URLSearchParams();
+  if (params.q) search.set("q", params.q);
+  if (params.category) search.set("category", params.category);
+  if (params.importance) search.set("importance", params.importance);
+  if (params.originalOrDerived) search.set("original_or_derived", params.originalOrDerived);
+  if (params.sortBy) search.set("sortBy", params.sortBy);
+  if (params.sortDir) search.set("sortDir", params.sortDir);
+  const qs = search.toString();
+  return qs ? `?${qs}` : "";
+}
+
+function evidenceToQuery(params: EvidenceSearchParams): string {
+  return toQuery({
+    relationship: params.relationship,
+    sourceCategory: params.sourceCategory,
+    sourceImportance: params.sourceImportance,
+    sortBy: params.sortBy,
+    sortDir: params.sortDir,
+  });
+}
+
 export const api = {
   list: <T>(resource: string) => request<T[]>(`/${resource}`),
   get: <T>(resource: string, id: string) => request<T>(`/${resource}/${id}`),
@@ -24,6 +302,71 @@ export const api = {
     request<T>(`/${resource}/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   remove: (resource: string, id: string) =>
     request<void>(`/${resource}/${id}`, { method: "DELETE" }),
+  searchSources: (params: SourceSearchParams = {}) =>
+    request<SourceSearchResult>(`/sources${sourceToQuery(params)}`),
+  searchSourcesAutocomplete: (q: string, limit = 20) =>
+    request<{ items: SourceRecord[] }>(
+      `/sources/search${toQuery({ q, limit: String(limit) })}`,
+    ),
+  getSource: (id: string) => request<SourceRecord>(`/sources/${encodeURIComponent(id)}`),
+  getSourceReferencedBy: (id: string) =>
+    request<EvidenceLinkRecord[]>(`/sources/${encodeURIComponent(id)}/referenced-by`),
+  getSourceFilterOptions: () => request<SourceFilterOptions>("/sources/meta/filters"),
+  searchClaimsList: (params: ClaimSearchParams = {}) =>
+    request<ClaimSearchResult>(`/claims${toQuery(params)}`),
+  searchClaims: (q: string, limit = 20) =>
+    request<{ items: ClaimRecord[] }>(`/claims/search${toQuery({ q, limit: String(limit) })}`),
+  getClaim: (id: string) => request<ClaimRecord>(`/claims/${encodeURIComponent(id)}`),
+  getClaimEvidence: (id: string) =>
+    request<EvidenceLinkRecord[]>(`/claims/${encodeURIComponent(id)}/evidence`),
+  getClaimObservations: (id: string) =>
+    request<ObservationClaimLinkRecord[]>(
+      `/claims/${encodeURIComponent(id)}/observations`,
+    ),
+  searchObservations: (params: ObservationSearchParams = {}) =>
+    request<ObservationSearchResult>(`/observations${toQuery(params)}`),
+  getObservation: (id: string) =>
+    request<ObservationRecord>(`/observations/${encodeURIComponent(id)}`),
+  getSourceObservations: (id: string) =>
+    request<ObservationRecord[]>(`/sources/${encodeURIComponent(id)}/observations`),
+  createObservationClaimLink: (
+    observationId: string,
+    body: { claimId: string; relationshipType?: string },
+  ) =>
+    request<ObservationClaimLinkRecord>(
+      `/observations/${encodeURIComponent(observationId)}/claim-links`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  removeObservationClaimLink: (observationId: string, linkId: string) =>
+    request<void>(
+      `/observations/${encodeURIComponent(observationId)}/claim-links/${encodeURIComponent(linkId)}`,
+      { method: "DELETE" },
+    ),
+  searchShipFeatures: (params: ShipFeatureSearchParams = {}) =>
+    request<ShipFeatureSearchResult>(`/ship-features${toQuery(params)}`),
+  getShipFeature: (id: string) =>
+    request<ShipFeatureRecord>(`/ship-features/${encodeURIComponent(id)}`),
+  getShipFeatureObservations: (id: string) =>
+    request<ObservationShipFeatureLinkRecord[]>(
+      `/ship-features/${encodeURIComponent(id)}/observations`,
+    ),
+  createShipFeatureObservationLink: (
+    featureId: string,
+    body: { observationId: string; relationshipType?: string; notes?: string },
+  ) =>
+    request<ObservationShipFeatureLinkRecord>(
+      `/ship-features/${encodeURIComponent(featureId)}/observation-links`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  removeShipFeatureObservationLink: (featureId: string, linkId: string) =>
+    request<void>(
+      `/ship-features/${encodeURIComponent(featureId)}/observation-links/${encodeURIComponent(linkId)}`,
+      { method: "DELETE" },
+    ),
+  searchEvidence: (params: EvidenceSearchParams = {}) =>
+    request<EvidenceSearchResult>(`/evidence-links${evidenceToQuery(params)}`),
+  getEvidenceFilterOptions: () => request<EvidenceFilterOptions>("/evidence-links/meta/filters"),
+  getStats: () => request<Stats>("/stats"),
   importSources: async (file: File) => {
     const form = new FormData();
     form.append("file", file);

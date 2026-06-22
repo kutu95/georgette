@@ -1,0 +1,380 @@
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { api, type SourceFilterOptions, type SourceRecord } from "../lib/api";
+import { sourceConfig } from "../lib/entities";
+
+const SORT_OPTIONS = [
+  { value: "source_id", label: "Source ID" },
+  { value: "suggested_standard_file_name", label: "Standard File Name" },
+  { value: "category", label: "Category" },
+  { value: "importance", label: "Importance" },
+] as const;
+
+
+export function SourcesPage() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const q = searchParams.get("q") ?? "";
+  const category = searchParams.get("category") ?? "";
+  const importance = searchParams.get("importance") ?? "";
+  const originalOrDerived = searchParams.get("original_or_derived") ?? "";
+  const sortBy = searchParams.get("sortBy") ?? "source_id";
+  const sortDir = (searchParams.get("sortDir") ?? "asc") as "asc" | "desc";
+
+  const [items, setItems] = useState<SourceRecord[]>([]);
+  const [total, setTotal] = useState(0);
+  const [filtered, setFiltered] = useState(0);
+  const [filterOptions, setFilterOptions] = useState<SourceFilterOptions>({
+    categories: [],
+    importances: [],
+    originalOrDerived: [],
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState<Record<string, unknown>>({});
+  const [saving, setSaving] = useState(false);
+
+  const updateParams = useCallback(
+    (updates: Record<string, string>) => {
+      const next = new URLSearchParams(searchParams);
+      for (const [key, value] of Object.entries(updates)) {
+        if (value) next.set(key, value);
+        else next.delete(key);
+      }
+      setSearchParams(next, { replace: true });
+    },
+    [searchParams, setSearchParams],
+  );
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [result, options] = await Promise.all([
+        api.searchSources({ q, category, importance, originalOrDerived, sortBy, sortDir }),
+        api.getSourceFilterOptions(),
+      ]);
+      setItems(result.items);
+      setTotal(result.total);
+      setFiltered(result.filtered);
+      setFilterOptions(options);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load sources");
+    } finally {
+      setLoading(false);
+    }
+  }, [q, category, importance, originalOrDerived, sortBy, sortDir]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function openNew() {
+    const empty: Record<string, unknown> = {};
+    for (const field of sourceConfig.fields) {
+      if (field.type === "select" && field.options?.length) {
+        empty[field.key] = field.options[0].value;
+      } else {
+        empty[field.key] = "";
+      }
+    }
+    setForm(empty);
+    setShowForm(true);
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      const payload: Record<string, unknown> = {};
+      for (const field of sourceConfig.fields) {
+        let val = form[field.key];
+        if (field.type === "number" && val !== "" && val != null) {
+          val = Number(val);
+        }
+        if (val !== "" && val != null) {
+          payload[field.key] = val;
+        }
+      }
+      await api.create("sources", payload);
+      setShowForm(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const hasActiveFilters = Boolean(q || category || importance || originalOrDerived);
+
+  return (
+    <div className="min-w-0">
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-semibold text-stone-900">{sourceConfig.title}</h2>
+          <p className="mt-1 text-sm text-stone-600">{sourceConfig.description}</p>
+        </div>
+        <button
+          type="button"
+          onClick={openNew}
+          className="rounded-md bg-stone-800 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700"
+        >
+          Add Source
+        </button>
+      </div>
+
+      <div className="mb-6 space-y-4 rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium text-stone-700">Search sources</span>
+          <input
+            type="search"
+            value={q}
+            onChange={(e) => updateParams({ q: e.target.value })}
+            placeholder="Search ID, file names, notes…"
+            className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+          />
+          <span className="mt-1 block text-xs text-stone-500">
+            Searches source ID, file names, notes, category, and importance (case insensitive)
+          </span>
+        </label>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-stone-700">Category</span>
+            <select
+              value={category}
+              onChange={(e) => updateParams({ category: e.target.value })}
+              className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+            >
+              <option value="">All categories</option>
+              {filterOptions.categories.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-stone-700">Importance</span>
+            <select
+              value={importance}
+              onChange={(e) => updateParams({ importance: e.target.value })}
+              className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+            >
+              <option value="">All importance levels</option>
+              {filterOptions.importances.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-stone-700">Original / Derived</span>
+            <select
+              value={originalOrDerived}
+              onChange={(e) => updateParams({ original_or_derived: e.target.value })}
+              className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+            >
+              <option value="">All types</option>
+              {filterOptions.originalOrDerived.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-stone-700">Sort by</span>
+            <select
+              value={sortBy}
+              onChange={(e) => updateParams({ sortBy: e.target.value })}
+              className="rounded-md border border-stone-300 px-3 py-2 text-sm"
+            >
+              {SORT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-stone-700">Direction</span>
+            <select
+              value={sortDir}
+              onChange={(e) => updateParams({ sortDir: e.target.value })}
+              className="rounded-md border border-stone-300 px-3 py-2 text-sm"
+            >
+              <option value="asc">Ascending</option>
+              <option value="desc">Descending</option>
+            </select>
+          </label>
+
+          {hasActiveFilters && (
+            <button
+              type="button"
+              onClick={() =>
+                setSearchParams({}, { replace: true })
+              }
+              className="rounded-md border border-stone-300 px-3 py-2 text-sm text-stone-700 hover:bg-stone-50"
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
+      </div>
+
+      <p className="mb-4 text-sm text-stone-600">
+        {loading ? (
+          "Loading…"
+        ) : q || category || importance || originalOrDerived ? (
+          <>
+            Showing <strong>{filtered}</strong> matching sources of <strong>{total}</strong> total
+          </>
+        ) : (
+          <>
+            Showing <strong>{filtered}</strong> of <strong>{total}</strong> sources
+          </>
+        )}
+      </p>
+
+      {error && (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {error}
+        </div>
+      )}
+
+      {showForm && (
+        <div className="mb-8 rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
+          <h3 className="mb-4 text-lg font-medium">New Source</h3>
+          <form onSubmit={handleSave} className="grid gap-4 sm:grid-cols-2">
+            {sourceConfig.fields.map((field) => {
+              const value = form[field.key] ?? "";
+              if (field.type === "textarea") {
+                return (
+                  <label key={field.key} className="block sm:col-span-2">
+                    <span className="mb-1 block text-sm font-medium text-stone-700">
+                      {field.label}
+                    </span>
+                    <textarea
+                      value={String(value)}
+                      onChange={(e) => setForm((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                      rows={3}
+                      className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+                    />
+                  </label>
+                );
+              }
+              if (field.type === "select" && field.options) {
+                return (
+                  <label key={field.key} className="block">
+                    <span className="mb-1 block text-sm font-medium text-stone-700">
+                      {field.label}
+                    </span>
+                    <select
+                      value={String(value)}
+                      onChange={(e) => setForm((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                      className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+                    >
+                      {field.options.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                );
+              }
+              return (
+                <label key={field.key} className="block">
+                  <span className="mb-1 block text-sm font-medium text-stone-700">
+                    {field.label}
+                    {field.required && <span className="text-red-600"> *</span>}
+                  </span>
+                  <input
+                    type={field.type === "number" ? "number" : "text"}
+                    value={String(value)}
+                    onChange={(e) => setForm((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                    required={field.required}
+                    className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+                  />
+                </label>
+              );
+            })}
+            <div className="flex gap-2 sm:col-span-2">
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-md bg-stone-800 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50"
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowForm(false)}
+                className="rounded-md border border-stone-300 px-4 py-2 text-sm text-stone-700 hover:bg-stone-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {!loading && items.length === 0 ? (
+        <p className="text-sm text-stone-500">No sources match your search.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-stone-200 bg-white shadow-sm">
+          <table className="min-w-max w-full text-left text-sm">
+            <thead className="border-b border-stone-200 bg-stone-50">
+              <tr>
+                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">ID</th>
+                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">File Name</th>
+                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">Standard Name</th>
+                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">Category</th>
+                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">Importance</th>
+                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">Original/Derived</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-stone-100">
+              {items.map((item) => (
+                <tr
+                  key={item.sourceId}
+                  onClick={() =>
+                    navigate(`/sources/${encodeURIComponent(item.sourceId)}?${searchParams.toString()}`)
+                  }
+                  className="cursor-pointer hover:bg-stone-50"
+                >
+                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-stone-800">
+                    {item.sourceId}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-800">
+                    {item.currentFileName ?? "—"}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-800">
+                    {item.suggestedStandardFileName ?? "—"}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-800">{item.category ?? "—"}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-800">{item.importance ?? "—"}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-stone-800">
+                    {item.originalOrDerived ?? "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -52,6 +52,7 @@ export const ENTITY_TYPES = [
   "MANUSCRIPT_REFERENCE",
   "TAG",
   "EVIDENCE_LINK",
+  "OBSERVATION",
   "FILE",
 ] as const;
 
@@ -97,11 +98,13 @@ export const sourceConfig: EntityConfig = {
 export const claimConfig: EntityConfig = {
   resource: "claims",
   title: "Claims",
-  description: "Historical claims — confidence belongs here, not on sources.",
+  description:
+    "Historical claims — the core of the argument and evidence database. Trace each claim back to sources.",
   idField: "claimId",
   columns: [
+    { key: "claimId", label: "ID" },
+    { key: "claimTier", label: "Tier" },
     { key: "claimText", label: "Claim" },
-    { key: "topic", label: "Topic" },
     { key: "status", label: "Status" },
     { key: "confidence", label: "Confidence" },
   ],
@@ -109,15 +112,26 @@ export const claimConfig: EntityConfig = {
     { key: "claimText", label: "Claim Text", type: "textarea", required: true },
     { key: "topic", label: "Topic" },
     {
+      key: "claimTier",
+      label: "Claim Tier",
+      type: "select",
+      options: [
+        { value: "TIER_1", label: "Tier 1 — Core thesis claims" },
+        { value: "TIER_2", label: "Tier 2 — Important facts (default)" },
+        { value: "TIER_3", label: "Tier 3 — Minor supporting details" },
+      ],
+    },
+    {
       key: "status",
       label: "Status",
       type: "select",
       options: [
         { value: "DRAFT", label: "Draft" },
-        { value: "ACTIVE", label: "Active" },
-        { value: "DISPUTED", label: "Disputed" },
-        { value: "SUPERSEDED", label: "Superseded" },
-        { value: "ARCHIVED", label: "Archived" },
+        { value: "UNDER_INVESTIGATION", label: "Under Investigation" },
+        { value: "SUPPORTED", label: "Supported" },
+        { value: "PARTIALLY_SUPPORTED", label: "Partially Supported" },
+        { value: "CONTRADICTED", label: "Contradicted" },
+        { value: "UNRESOLVED", label: "Unresolved" },
       ],
     },
     {
@@ -125,10 +139,21 @@ export const claimConfig: EntityConfig = {
       label: "Confidence",
       type: "select",
       options: [
+        { value: "UNKNOWN", label: "Unknown" },
         { value: "LOW", label: "Low" },
         { value: "MEDIUM", label: "Medium" },
         { value: "HIGH", label: "High (requires primary source)" },
       ],
+    },
+    {
+      key: "evidenceRequirements",
+      label: "Evidence Requirements",
+      type: "textarea",
+    },
+    {
+      key: "researchQuestions",
+      label: "Research Questions",
+      type: "textarea",
     },
     { key: "notes", label: "Notes", type: "textarea" },
   ],

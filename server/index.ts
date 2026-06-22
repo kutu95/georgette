@@ -1,60 +1,86 @@
 import "dotenv/config";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import cors from "cors";
 import multer from "multer";
 import Papa from "papaparse";
-import { prisma } from "./db.js";
-import { createCrudRouter, claimBeforeWrite } from "./routes/crud.js";
+import { checkDatabase, prisma, withDbRetry } from "./db.js";
+import { attachErrorHandlers, installProcessHandlers } from "./middleware.js";
+import { buildStats } from "./stats.js";
+import { createCrudRouter } from "./routes/crud.js";
+import { sourcesRouter } from "./routes/sources.js";
+import { claimsRouter } from "./routes/claims.js";
+import { evidenceRouter } from "./routes/evidence.js";
+import { observationsRouter } from "./routes/observations.js";
+import { shipFeaturesRouter } from "./routes/shipFeatures.js";
+import { seedTier1Claims } from "./seedTier1Claims.js";
+import { seedShipFeatures } from "./seedShipFeatures.js";
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
+installProcessHandlers();
+
 app.use(cors());
 app.use(express.json());
 
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", schema: "georgette" });
+app.get("/api/health", async (_req, res) => {
+  const db = await checkDatabase();
+  if (db.ok) {
+    res.json({ status: "ok", schema: "georgette", database: "connected" });
+    return;
+  }
+  res.status(503).json({
+    status: "degraded",
+    schema: "georgette",
+    database: "unreachable",
+    error: db.error,
+  });
 });
 
-app.use(
-  "/api/sources",
-  createCrudRouter({
-    model: "source",
-    idField: "sourceId",
-    beforeCreate: (body) => {
-      if (!body.sourceId || typeof body.sourceId !== "string") {
-        return "sourceId is required";
-      }
-      return body;
-    },
-  }),
-);
+app.use("/api/sources", sourcesRouter);
 
-app.use(
-  "/api/claims",
-  createCrudRouter({
-    model: "claim",
-    idField: "claimId",
-    beforeCreate: (body) => claimBeforeWrite(undefined, body),
-    beforeUpdate: (id, body) => claimBeforeWrite(id, body),
-  }),
-);
+app.get("/api/stats", async (_req, res) => {
+  try {
+    const stats = await buildStats();
+    res.json(stats);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to load stats";
+    console.error("[api] /api/stats failed:", message);
+    res.status(200).json({
+      sources: 0,
+      claims: 0,
+      evidenceLinks: 0,
+      observations: 0,
+      people: 0,
+      places: 0,
+      events: 0,
+      contradictions: 0,
+      topCategories: [],
+      tier1: { total: 0, supported: 0, underInvestigation: 0, unresolved: 0 },
+      observationsQuality: { total: 0, withoutClaims: 0, claimsWithoutObservations: 0 },
+      shipReconstruction: {
+        total: 0,
+        confirmed: 0,
+        probable: 0,
+        possible: 0,
+        rejected: 0,
+        criticalVisual: 0,
+        criticalWithoutEvidence: 0,
+      },
+      warnings: [message],
+    });
+  }
+});
 
-// Evidence links cannot be deleted if they contradict (historical rule: keep contradictory evidence)
-app.use(
-  "/api/evidence-links",
-  createCrudRouter({
-    model: "evidenceLink",
-    idField: "evidenceId",
-    canDelete: async (id) => {
-      const link = await prisma.evidenceLink.findUnique({ where: { evidenceId: id } });
-      if (link?.relationship === "CONTRADICTS") {
-        return "Contradictory evidence must not be deleted per historical rules.";
-      }
-      return null;
-    },
-  }),
-);
+app.use("/api/claims", claimsRouter);
+
+app.use("/api/observations", observationsRouter);
+
+app.use("/api/ship-features", shipFeaturesRouter);
+
+app.use("/api/evidence-links", evidenceRouter);
 
 app.use("/api/people", createCrudRouter({ model: "person", idField: "personId" }));
 app.use("/api/places", createCrudRouter({ model: "place", idField: "placeId" }));
@@ -220,6 +246,18 @@ app.get("/api/entities/:type", async (req, res) => {
           label: `${e.relationship} — ${e.evidenceId}`,
         }));
         break;
+      case "OBSERVATION":
+        items = (await prisma.observation.findMany()).map((o) => ({
+          id: o.observationId,
+          label: o.observationText.slice(0, 80),
+        }));
+        break;
+      case "SHIP_FEATURE":
+        items = (await prisma.shipFeature.findMany()).map((f) => ({
+          id: f.featureId,
+          label: f.featureName,
+        }));
+        break;
       case "FILE":
         items = (await prisma.file.findMany()).map((f) => ({
           id: f.fileId,
@@ -236,8 +274,49 @@ app.get("/api/entities/:type", async (req, res) => {
   }
 });
 
+function attachProductionFrontend(app: Express): void {
+  const distPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "../dist");
+  app.use(express.static(distPath));
+  app.get(/^(?!\/api\/).*/, (_req, res, next) => {
+    res.sendFile(path.join(distPath, "index.html"), (err) => {
+      if (err) next(err);
+    });
+  });
+}
+
+if (process.env.NODE_ENV === "production") {
+  attachProductionFrontend(app);
+}
+
+attachErrorHandlers(app);
+
 const PORT = Number(process.env.PORT) || 3001;
 
-app.listen(PORT, () => {
-  console.log(`Georgette Research API running on http://localhost:${PORT}`);
-});
+async function start() {
+  const db = await checkDatabase();
+  if (db.ok) {
+    console.log("Database connected");
+    try {
+      await withDbRetry(() => seedTier1Claims());
+      await withDbRetry(() => seedShipFeatures());
+    } catch (err) {
+      console.warn(
+        "[api] Seed skipped:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  } else {
+    console.warn("Database not ready — API will start in degraded mode:");
+    console.warn(`  ${db.error}`);
+    console.warn(
+      "  If the home server is offline, run: npm run db:local:up && npm run db:local:migrate",
+    );
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    const mode = process.env.NODE_ENV === "production" ? "production" : "development";
+    console.log(`Georgette Research API running on http://0.0.0.0:${PORT} (${mode})`);
+  });
+}
+
+void start();

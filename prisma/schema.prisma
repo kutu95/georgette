@@ -19,6 +19,8 @@ enum EntityType {
   MANUSCRIPT_REFERENCE
   TAG
   EVIDENCE_LINK
+  OBSERVATION
+  SHIP_FEATURE
   FILE
 
   @@schema("georgette")
@@ -52,15 +54,25 @@ enum RelationshipType {
 
 enum ClaimStatus {
   DRAFT
-  ACTIVE
-  DISPUTED
-  SUPERSEDED
-  ARCHIVED
+  UNDER_INVESTIGATION
+  SUPPORTED
+  PARTIALLY_SUPPORTED
+  CONTRADICTED
+  UNRESOLVED
+
+  @@schema("georgette")
+}
+
+enum ClaimTier {
+  TIER_1
+  TIER_2
+  TIER_3
 
   @@schema("georgette")
 }
 
 enum ConfidenceLevel {
+  UNKNOWN
   LOW
   MEDIUM
   HIGH
@@ -73,6 +85,69 @@ enum EvidenceRelationship {
   CONTRADICTS
   QUALIFIES
   MENTIONS
+
+  @@schema("georgette")
+}
+
+enum ObservationConfidence {
+  CERTAIN
+  LIKELY
+  POSSIBLE
+  UNCERTAIN
+
+  @@schema("georgette")
+}
+
+enum ShipFeatureCategory {
+  HULL
+  RIGGING
+  DECK_LAYOUT
+  MACHINERY
+  BOATS
+  ACCOMMODATION
+  NAVIGATION
+  CARGO_HANDLING
+  PAINTWORK
+  FITTINGS
+  DIMENSIONS
+  OTHER
+
+  @@schema("georgette")
+}
+
+enum ShipFeatureStatus {
+  CONFIRMED
+  PROBABLE
+  POSSIBLE
+  REJECTED
+  UNKNOWN
+
+  @@schema("georgette")
+}
+
+enum ShipFeatureConfidence {
+  VERY_HIGH
+  HIGH
+  MEDIUM
+  LOW
+  VERY_LOW
+
+  @@schema("georgette")
+}
+
+enum VisualImpact {
+  CRITICAL
+  MAJOR
+  MINOR
+  HIDDEN
+
+  @@schema("georgette")
+}
+
+enum ShipFeatureRelationship {
+  SUPPORTS
+  CONTRADICTS
+  QUALIFIES
 
   @@schema("georgette")
 }
@@ -95,8 +170,9 @@ model Source {
 
   parent   Source?  @relation("SourceHierarchy", fields: [parentSourceId], references: [sourceId])
   children Source[] @relation("SourceHierarchy")
-  files    File[]
-  evidence EvidenceLink[]
+  files         File[]
+  evidence      EvidenceLink[]
+  observations  Observation[]
 
   @@map("sources")
   @@schema("georgette")
@@ -119,16 +195,20 @@ model File {
 }
 
 model Claim {
-  claimId    String           @id @default(cuid()) @map("claim_id")
-  claimText  String           @map("claim_text")
-  topic      String?
-  status     ClaimStatus      @default(DRAFT)
-  confidence ConfidenceLevel  @default(LOW)
-  notes      String?
-  createdAt  DateTime         @default(now()) @map("created_at")
-  updatedAt  DateTime         @updatedAt @map("updated_at")
+  claimId               String           @id @default(cuid()) @map("claim_id")
+  claimText             String           @map("claim_text")
+  topic                 String?
+  claimTier             ClaimTier        @default(TIER_2) @map("claim_tier")
+  status                ClaimStatus      @default(DRAFT)
+  confidence            ConfidenceLevel  @default(LOW)
+  evidenceRequirements  String?          @map("evidence_requirements")
+  researchQuestions     String?          @map("research_questions")
+  notes                 String?
+  createdAt             DateTime         @default(now()) @map("created_at")
+  updatedAt             DateTime         @updatedAt @map("updated_at")
 
   evidence              EvidenceLink[]
+  observationLinks      ObservationClaimLink[]
   contradictionsAsA     Contradiction[] @relation("ContradictionClaimA")
   contradictionsAsB     Contradiction[] @relation("ContradictionClaimB")
   manuscriptReferences  ManuscriptReference[]
@@ -152,6 +232,76 @@ model EvidenceLink {
   source Source @relation(fields: [sourceId], references: [sourceId], onDelete: Restrict)
 
   @@map("evidence_links")
+  @@schema("georgette")
+}
+
+model Observation {
+  observationId   String                @id @default(cuid()) @map("observation_id")
+  sourceId        String                @map("source_id")
+  observationText String                @map("observation_text")
+  pageOrFolio     String?               @map("page_or_folio")
+  quote           String?
+  notes           String?
+  confidence      ObservationConfidence @default(LIKELY)
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+
+  source             Source                 @relation(fields: [sourceId], references: [sourceId], onDelete: Restrict)
+  claimLinks         ObservationClaimLink[]
+  shipFeatureLinks   ObservationShipFeatureLink[]
+
+  @@map("observations")
+  @@schema("georgette")
+}
+
+model ObservationClaimLink {
+  linkId           String               @id @default(cuid()) @map("link_id")
+  observationId    String               @map("observation_id")
+  claimId          String               @map("claim_id")
+  relationshipType EvidenceRelationship @default(SUPPORTS) @map("relationship_type")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+
+  observation Observation @relation(fields: [observationId], references: [observationId], onDelete: Restrict)
+  claim       Claim       @relation(fields: [claimId], references: [claimId], onDelete: Restrict)
+
+  @@unique([observationId, claimId])
+  @@map("observation_claim_links")
+  @@schema("georgette")
+}
+
+model ShipFeature {
+  featureId    String                @id @map("feature_id")
+  featureName  String                @map("feature_name")
+  category     ShipFeatureCategory
+  description  String?
+  status       ShipFeatureStatus     @default(POSSIBLE)
+  confidence   ShipFeatureConfidence @default(MEDIUM)
+  visualImpact VisualImpact          @default(MINOR) @map("visual_impact")
+  notes        String?
+  createdAt    DateTime              @default(now()) @map("created_at")
+  updatedAt    DateTime              @updatedAt @map("updated_at")
+
+  observationLinks ObservationShipFeatureLink[]
+
+  @@map("ship_features")
+  @@schema("georgette")
+}
+
+model ObservationShipFeatureLink {
+  linkId           String                  @id @default(cuid()) @map("link_id")
+  observationId    String                  @map("observation_id")
+  featureId        String                  @map("feature_id")
+  relationshipType ShipFeatureRelationship @default(SUPPORTS) @map("relationship_type")
+  notes            String?
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  observation Observation @relation(fields: [observationId], references: [observationId], onDelete: Restrict)
+  feature     ShipFeature @relation(fields: [featureId], references: [featureId], onDelete: Restrict)
+
+  @@unique([observationId, featureId])
+  @@map("observation_ship_feature_links")
   @@schema("georgette")
 }
 

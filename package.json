@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:client": "vite",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "prisma generate && tsx watch server/index.ts",
     "build": "prisma generate && tsc -b && vite build",
+    "start": "NODE_ENV=production tsx server/index.ts",
+    "deploy:server": "bash scripts/deploy-server.sh",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:new": "echo 'Use: npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --script -o prisma/migrations/<timestamp>_<name>/migration.sql' && exit 1",
