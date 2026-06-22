@@ -12,6 +12,32 @@ import {
 import { UPLOAD_DOCUMENT_KINDS } from "../lib/documentKinds";
 import { formatDocumentKind, formatSourceLabel } from "../lib/format";
 
+type AnalyzeStatus = "pending" | "analyzing" | "done" | "error";
+type UploadStatus = "idle" | "uploading" | "uploaded" | "skipped" | "error";
+
+type UploadQueueItem = {
+  id: string;
+  file: File;
+  analysis: DocumentMatchResult | null;
+  selectedSourceId: string | null;
+  selectedSourceLabel: string | null;
+  overwriteFileId: string | null;
+  duplicateResolved: boolean;
+  documentKind: string;
+  pageNumber: string;
+  groupLabel: string;
+  notes: string;
+  analyzeStatus: AnalyzeStatus;
+  analyzeError: string | null;
+  uploadStatus: UploadStatus;
+  uploadError: string | null;
+  uploadedRecord: SourceDocumentRecord | null;
+};
+
+function queueItemId(file: File): string {
+  return `${file.name}-${file.size}-${file.lastModified}`;
+}
+
 function matchMethodLabel(method: DocumentMatchCandidate["method"]): string {
   if (method === "filename") return "Filename";
   if (method === "content") return "Content";
@@ -43,222 +69,511 @@ function statusMessage(result: DocumentMatchResult): { tone: "ok" | "warn" | "ne
   };
 }
 
+function applyRecommendationToItem(
+  item: UploadQueueItem,
+  result: DocumentMatchResult,
+): UploadQueueItem {
+  const next = { ...item };
+  const recommended = result.recommended;
+  if (recommended) {
+    next.selectedSourceId = recommended.sourceId;
+    next.selectedSourceLabel = recommended.sourceLabel;
+    next.documentKind = recommended.documentKind ?? (result.inferredKind !== "OTHER" ? result.inferredKind : next.documentKind);
+    next.pageNumber =
+      recommended.pageNumber != null
+        ? String(recommended.pageNumber)
+        : result.inferredPageNumber != null
+          ? String(result.inferredPageNumber)
+          : next.pageNumber;
+  } else {
+    next.selectedSourceId = null;
+    next.selectedSourceLabel = null;
+    if (result.inferredKind !== "OTHER") next.documentKind = result.inferredKind;
+    if (result.inferredPageNumber != null) next.pageNumber = String(result.inferredPageNumber);
+  }
+  return next;
+}
+
+function applyExistingToItem(item: UploadQueueItem, existing: ExistingDocumentMatch): UploadQueueItem {
+  return {
+    ...item,
+    overwriteFileId: existing.fileId,
+    selectedSourceId: existing.sourceId,
+    selectedSourceLabel: existing.sourceLabel,
+    documentKind: existing.documentKind ?? item.documentKind,
+    pageNumber: existing.pageNumber != null ? String(existing.pageNumber) : item.pageNumber,
+  };
+}
+
+function itemFromAnalysis(file: File, result: DocumentMatchResult): UploadQueueItem {
+  let item: UploadQueueItem = {
+    id: queueItemId(file),
+    file,
+    analysis: result,
+    selectedSourceId: null,
+    selectedSourceLabel: null,
+    overwriteFileId: null,
+    duplicateResolved: result.existingDocuments.length === 0,
+    documentKind: result.inferredKind !== "OTHER" ? result.inferredKind : "ORIGINAL",
+    pageNumber: result.inferredPageNumber != null ? String(result.inferredPageNumber) : "",
+    groupLabel: "",
+    notes: "",
+    analyzeStatus: "done",
+    analyzeError: null,
+    uploadStatus: "idle",
+    uploadError: null,
+    uploadedRecord: null,
+  };
+
+  if (result.existingDocuments.length > 0) {
+    item = applyExistingToItem(item, result.existingDocuments[0]);
+  } else {
+    item = applyRecommendationToItem(item, result);
+  }
+  return item;
+}
+
+function hasPendingDuplicates(item: UploadQueueItem): boolean {
+  return (item.analysis?.existingDocuments.length ?? 0) > 0 && !item.duplicateResolved;
+}
+
+function canUploadItem(item: UploadQueueItem): boolean {
+  return (
+    item.analyzeStatus === "done" &&
+    (item.uploadStatus === "idle" || item.uploadStatus === "error") &&
+    !hasPendingDuplicates(item) &&
+    Boolean(item.selectedSourceId)
+  );
+}
+
+function queueItemSummary(item: UploadQueueItem): { label: string; tone: string } {
+  if (item.analyzeStatus === "pending" || item.analyzeStatus === "analyzing") {
+    return { label: item.analyzeStatus === "analyzing" ? "Analyzing…" : "Queued", tone: "text-stone-500" };
+  }
+  if (item.analyzeStatus === "error") {
+    return { label: "Analysis failed", tone: "text-red-700" };
+  }
+  if (item.uploadStatus === "uploaded") {
+    return { label: "Uploaded", tone: "text-green-700" };
+  }
+  if (item.uploadStatus === "skipped") {
+    return { label: "Skipped", tone: "text-stone-500" };
+  }
+  if (item.uploadStatus === "uploading") {
+    return { label: "Uploading…", tone: "text-stone-600" };
+  }
+  if (item.uploadStatus === "error") {
+    return { label: "Upload failed", tone: "text-red-700" };
+  }
+  if (hasPendingDuplicates(item)) {
+    return { label: "Duplicate — action needed", tone: "text-red-700" };
+  }
+  if (!item.selectedSourceId) {
+    return { label: "Select source", tone: "text-amber-700" };
+  }
+  if (item.overwriteFileId) {
+    return { label: "Ready to overwrite", tone: "text-amber-800" };
+  }
+  return { label: "Ready to upload", tone: "text-green-700" };
+}
+
 function resetFileInput(input: HTMLInputElement | null) {
   if (input) input.value = "";
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export function SmartDocumentUploadPage() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [analysis, setAnalysis] = useState<DocumentMatchResult | null>(null);
-  const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
-  const [selectedSourceLabel, setSelectedSourceLabel] = useState<string | null>(null);
-  const [overwriteFileId, setOverwriteFileId] = useState<string | null>(null);
-  const [duplicateResolved, setDuplicateResolved] = useState(false);
-  const [documentKind, setDocumentKind] = useState("ORIGINAL");
-  const [pageNumber, setPageNumber] = useState("");
-  const [groupLabel, setGroupLabel] = useState("");
-  const [notes, setNotes] = useState("");
-  const [analyzing, setAnalyzing] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [uploaded, setUploaded] = useState<SourceDocumentRecord | null>(null);
+  const [queue, setQueue] = useState<UploadQueueItem[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [batchUploading, setBatchUploading] = useState(false);
+  const [globalError, setGlobalError] = useState<string | null>(null);
 
-  const hasDuplicates = (analysis?.existingDocuments.length ?? 0) > 0;
-  const canProceed = Boolean(analysis && (!hasDuplicates || duplicateResolved));
-  const isOverwrite = Boolean(overwriteFileId);
+  const activeItem = queue.find((item) => item.id === activeId) ?? null;
+  const readyCount = queue.filter(canUploadItem).length;
+  const analyzingCount = queue.filter(
+    (item) => item.analyzeStatus === "pending" || item.analyzeStatus === "analyzing",
+  ).length;
 
-  const applyRecommendation = useCallback((result: DocumentMatchResult) => {
-    const recommended = result.recommended;
-    if (recommended) {
-      setSelectedSourceId(recommended.sourceId);
-      setSelectedSourceLabel(recommended.sourceLabel);
-      if (recommended.documentKind) {
-        setDocumentKind(recommended.documentKind);
-      } else if (result.inferredKind !== "OTHER") {
-        setDocumentKind(result.inferredKind);
+  const updateItem = useCallback((id: string, patch: Partial<UploadQueueItem> | ((item: UploadQueueItem) => UploadQueueItem)) => {
+    setQueue((current) =>
+      current.map((item) => {
+        if (item.id !== id) return item;
+        return typeof patch === "function" ? patch(item) : { ...item, ...patch };
+      }),
+    );
+  }, []);
+
+  const analyzeFile = useCallback(async (file: File) => {
+    const id = queueItemId(file);
+    setQueue((current) => {
+      const exists = current.some((item) => item.id === id);
+      const pendingItem: UploadQueueItem = {
+        id,
+        file,
+        analysis: null,
+        selectedSourceId: null,
+        selectedSourceLabel: null,
+        overwriteFileId: null,
+        duplicateResolved: false,
+        documentKind: "ORIGINAL",
+        pageNumber: "",
+        groupLabel: "",
+        notes: "",
+        analyzeStatus: "analyzing",
+        analyzeError: null,
+        uploadStatus: "idle",
+        uploadError: null,
+        uploadedRecord: null,
+      };
+      if (exists) {
+        return current.map((item) =>
+          item.id === id ? { ...pendingItem, uploadStatus: "idle", uploadedRecord: null } : item,
+        );
       }
-      if (recommended.pageNumber != null) {
-        setPageNumber(String(recommended.pageNumber));
-      } else if (result.inferredPageNumber != null) {
-        setPageNumber(String(result.inferredPageNumber));
-      }
-    } else {
-      setSelectedSourceId(null);
-      setSelectedSourceLabel(null);
-      if (result.inferredKind !== "OTHER") {
-        setDocumentKind(result.inferredKind);
-      }
-      if (result.inferredPageNumber != null) {
-        setPageNumber(String(result.inferredPageNumber));
-      }
+      return [...current, pendingItem];
+    });
+    setActiveId((current) => current ?? id);
+
+    try {
+      const result = await api.analyzeSmartDocumentUpload(file);
+      setQueue((current) =>
+        current.map((item) => (item.id === id ? itemFromAnalysis(file, result) : item)),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Analysis failed";
+      setQueue((current) =>
+        current.map((item) =>
+          item.id === id
+            ? { ...item, analyzeStatus: "error", analyzeError: message, analysis: null }
+            : item,
+        ),
+      );
     }
   }, []);
 
-  function applyExistingDocument(existing: ExistingDocumentMatch) {
-    setOverwriteFileId(existing.fileId);
-    setSelectedSourceId(existing.sourceId);
-    setSelectedSourceLabel(existing.sourceLabel);
-    if (existing.documentKind) setDocumentKind(existing.documentKind);
-    if (existing.pageNumber != null) setPageNumber(String(existing.pageNumber));
+  const addFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
+      setGlobalError(null);
+      const unique = files.filter(
+        (file, index, all) => all.findIndex((f) => queueItemId(f) === queueItemId(file)) === index,
+      );
+      await Promise.all(unique.map((file) => analyzeFile(file)));
+      resetFileInput(fileInputRef.current);
+    },
+    [analyzeFile],
+  );
+
+  function handleInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    void addFiles(files);
   }
 
-  function clearUploadState() {
-    setFile(null);
-    setAnalysis(null);
-    setSelectedSourceId(null);
-    setSelectedSourceLabel(null);
-    setOverwriteFileId(null);
-    setDuplicateResolved(false);
-    setPageNumber("");
-    setGroupLabel("");
-    setNotes("");
-    setUploaded(null);
-    setError(null);
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    void addFiles(files);
+  }
+
+  function clearQueue() {
+    setQueue([]);
+    setActiveId(null);
+    setGlobalError(null);
     resetFileInput(fileInputRef.current);
   }
 
-  async function handleFileSelect(selected: File | null) {
-    clearUploadState();
-    setFile(selected);
-
-    if (!selected) return;
-
-    setAnalyzing(true);
-    try {
-      const result = await api.analyzeSmartDocumentUpload(selected);
-      setAnalysis(result);
-      setDocumentKind(result.inferredKind !== "OTHER" ? result.inferredKind : "ORIGINAL");
-      if (result.inferredPageNumber != null) {
-        setPageNumber(String(result.inferredPageNumber));
-      }
-
-      if (result.existingDocuments.length === 0) {
-        setDuplicateResolved(true);
-        applyRecommendation(result);
-      } else {
-        applyExistingDocument(result.existingDocuments[0]);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Analysis failed");
-    } finally {
-      setAnalyzing(false);
-    }
+  function removeItem(id: string) {
+    setQueue((current) => {
+      const next = current.filter((item) => item.id !== id);
+      setActiveId((active) => (active === id ? next[0]?.id ?? null : active));
+      return next;
+    });
   }
 
-  function handleOverwrite() {
-    if (!analysis?.existingDocuments.length) return;
+  function handleOverwriteActive() {
+    if (!activeItem?.analysis?.existingDocuments.length) return;
     const target =
-      analysis.existingDocuments.find((doc) => doc.fileId === overwriteFileId) ??
-      analysis.existingDocuments[0];
-    applyExistingDocument(target);
-    setDuplicateResolved(true);
-    setError(null);
+      activeItem.analysis.existingDocuments.find((doc) => doc.fileId === activeItem.overwriteFileId) ??
+      activeItem.analysis.existingDocuments[0];
+    updateItem(activeItem.id, (item) => ({
+      ...applyExistingToItem(item, target),
+      duplicateResolved: true,
+      uploadError: null,
+    }));
   }
 
-  function handleCancelDuplicate() {
-    clearUploadState();
+  function handleSkipDuplicate() {
+    if (!activeItem) return;
+    updateItem(activeItem.id, {
+      uploadStatus: "skipped",
+      duplicateResolved: false,
+      uploadError: null,
+    });
+    const index = queue.findIndex((item) => item.id === activeItem.id);
+    const next = queue.slice(index + 1).find((item) => item.uploadStatus === "idle");
+    if (next) setActiveId(next.id);
   }
 
   function selectCandidate(candidate: DocumentMatchCandidate) {
-    if (isOverwrite) return;
-    setSelectedSourceId(candidate.sourceId);
-    setSelectedSourceLabel(candidate.sourceLabel);
-    if (candidate.documentKind) setDocumentKind(candidate.documentKind);
-    if (candidate.pageNumber != null) setPageNumber(String(candidate.pageNumber));
+    if (!activeItem || activeItem.overwriteFileId) return;
+    updateItem(activeItem.id, {
+      selectedSourceId: candidate.sourceId,
+      selectedSourceLabel: candidate.sourceLabel,
+      documentKind: candidate.documentKind ?? activeItem.documentKind,
+      pageNumber: candidate.pageNumber != null ? String(candidate.pageNumber) : activeItem.pageNumber,
+    });
   }
 
-  useEffect(() => {
-    if (!analysis || !duplicateResolved || hasDuplicates) return;
-    applyRecommendation(analysis);
-  }, [analysis, duplicateResolved, hasDuplicates, applyRecommendation]);
+  async function uploadItem(item: UploadQueueItem): Promise<boolean> {
+    if (!canUploadItem(item)) return false;
 
-  async function handleUpload(e: React.FormEvent) {
-    e.preventDefault();
-    if (!file || !selectedSourceId || !canProceed) return;
-
-    setUploading(true);
-    setError(null);
+    updateItem(item.id, { uploadStatus: "uploading", uploadError: null });
     try {
-      const created = await api.confirmSmartDocumentUpload(file, {
-        sourceId: selectedSourceId,
-        documentKind,
-        pageNumber: pageNumber ? Number(pageNumber) : undefined,
-        groupLabel: groupLabel.trim() || undefined,
-        notes: notes.trim() || undefined,
-        overwriteFileId: overwriteFileId ?? undefined,
+      const created = await api.confirmSmartDocumentUpload(item.file, {
+        sourceId: item.selectedSourceId!,
+        documentKind: item.documentKind,
+        pageNumber: item.pageNumber ? Number(item.pageNumber) : undefined,
+        groupLabel: item.groupLabel.trim() || undefined,
+        notes: item.notes.trim() || undefined,
+        overwriteFileId: item.overwriteFileId ?? undefined,
       });
-      setUploaded(created);
+      updateItem(item.id, {
+        uploadStatus: "uploaded",
+        uploadedRecord: created,
+        uploadError: null,
+      });
+      return true;
     } catch (err) {
       if (err instanceof SmartDocumentUploadError) {
-        setError(err.message);
-        if (err.existingDocuments.length === 1) {
-          applyExistingDocument(err.existingDocuments[0]);
-        }
-        setDuplicateResolved(false);
-        setAnalysis((current) =>
-          current
-            ? { ...current, existingDocuments: err.existingDocuments }
-            : current,
-        );
+        updateItem(item.id, (current) => {
+          const next = {
+            ...current,
+            uploadStatus: "error" as const,
+            uploadError: err.message,
+            duplicateResolved: false,
+          };
+          if (err.existingDocuments.length === 1) {
+            return applyExistingToItem(
+              {
+                ...next,
+                analysis: current.analysis
+                  ? { ...current.analysis, existingDocuments: err.existingDocuments }
+                  : null,
+              },
+              err.existingDocuments[0],
+            );
+          }
+          if (current.analysis) {
+            return {
+              ...next,
+              analysis: { ...current.analysis, existingDocuments: err.existingDocuments },
+            };
+          }
+          return next;
+        });
       } else {
-        setError(err instanceof Error ? err.message : "Upload failed");
+        updateItem(item.id, {
+          uploadStatus: "error",
+          uploadError: err instanceof Error ? err.message : "Upload failed",
+        });
       }
-    } finally {
-      setUploading(false);
+      return false;
     }
   }
 
+  async function handleUploadActive(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeItem) return;
+    await uploadItem(activeItem);
+  }
+
+  async function handleUploadAllReady() {
+    const ready = queue.filter(canUploadItem);
+    if (ready.length === 0) return;
+    setBatchUploading(true);
+    setGlobalError(null);
+    let failures = 0;
+    for (const item of ready) {
+      const ok = await uploadItem(item);
+      if (!ok) failures++;
+    }
+    if (failures > 0) {
+      setGlobalError(`${failures} file${failures === 1 ? "" : "s"} failed to upload. Review errors below.`);
+    }
+    setBatchUploading(false);
+  }
+
+  useEffect(() => {
+    if (activeId && queue.some((item) => item.id === activeId)) return;
+    setActiveId(queue[0]?.id ?? null);
+  }, [queue, activeId]);
+
+  const analysis = activeItem?.analysis ?? null;
+  const hasDuplicates = Boolean(activeItem && hasPendingDuplicates(activeItem));
+  const canProceed = Boolean(activeItem && activeItem.analyzeStatus === "done" && !hasDuplicates);
+  const isOverwrite = Boolean(activeItem?.overwriteFileId && activeItem.duplicateResolved);
   const status = analysis && canProceed ? statusMessage(analysis) : null;
+  const uploadedCount = queue.filter((item) => item.uploadStatus === "uploaded").length;
 
   return (
     <div className="max-w-3xl">
       <h2 className="text-2xl font-semibold text-stone-900">Smart Document Upload</h2>
       <p className="mt-1 text-sm text-stone-600">
-        Upload a document and Georgette will check whether it already exists, then try to match it
-        to a source by filename and content. If anything is uncertain, you choose the source
-        manually before saving.
+        Drop multiple documents or select several at once. Georgette checks each file for duplicates,
+        then matches it to a source by filename and content. Review anything uncertain before saving.
       </p>
 
       <div className="mt-6 space-y-6">
         <section className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
-          <h3 className="font-medium text-stone-800">1. Choose file</h3>
-          <div className="mt-3 flex flex-wrap items-center gap-3">
+          <h3 className="font-medium text-stone-800">1. Add files</h3>
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            className={[
+              "mt-3 rounded-lg border-2 border-dashed px-6 py-10 text-center transition-colors",
+              dragOver
+                ? "border-stone-800 bg-stone-100"
+                : "border-stone-300 bg-stone-50 hover:border-stone-400",
+            ].join(" ")}
+          >
+            <p className="text-sm font-medium text-stone-800">
+              Drag and drop files here
+            </p>
+            <p className="mt-1 text-sm text-stone-500">or</p>
             <input
               ref={fileInputRef}
               type="file"
+              multiple
               className="hidden"
-              onChange={(e) => void handleFileSelect(e.target.files?.[0] ?? null)}
+              onChange={handleInputChange}
             />
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={analyzing}
-              className="rounded-md bg-stone-800 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50"
+              disabled={analyzingCount > 0 && queue.length === 0}
+              className="mt-3 rounded-md bg-stone-800 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50"
             >
-              {analyzing ? "Analyzing…" : file ? "Choose another file" : "Select document"}
+              Choose files
             </button>
-            {file && (
-              <span className="text-sm text-stone-600">
-                {file.name} ({Math.round(file.size / 1024)} KB)
-              </span>
-            )}
+            <p className="mt-3 text-xs text-stone-500">
+              Multiple files supported · up to 100 MB each
+            </p>
           </div>
+
+          {queue.length > 0 && (
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-stone-600">
+                {queue.length} file{queue.length === 1 ? "" : "s"}
+                {analyzingCount > 0 ? ` · ${analyzingCount} analyzing` : ""}
+                {readyCount > 0 ? ` · ${readyCount} ready` : ""}
+                {uploadedCount > 0 ? ` · ${uploadedCount} uploaded` : ""}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {readyCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => void handleUploadAllReady()}
+                    disabled={batchUploading}
+                    className="rounded-md bg-stone-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50"
+                  >
+                    {batchUploading ? "Uploading…" : `Upload all ready (${readyCount})`}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={clearQueue}
+                  className="rounded-md border border-stone-300 px-3 py-1.5 text-sm text-stone-700 hover:bg-stone-50"
+                >
+                  Clear queue
+                </button>
+              </div>
+            </div>
+          )}
         </section>
 
-        {analysis && hasDuplicates && !duplicateResolved && (
+        {queue.length > 0 && (
+          <section className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+            <h3 className="px-2 font-medium text-stone-800">File queue</h3>
+            <ul className="mt-2 max-h-56 space-y-1 overflow-auto">
+              {queue.map((item) => {
+                const summary = queueItemSummary(item);
+                const isActive = item.id === activeId;
+                return (
+                  <li key={item.id}>
+                    <div
+                      className={[
+                        "flex items-center gap-2 rounded-md px-2 py-2 text-sm",
+                        isActive ? "bg-stone-100" : "hover:bg-stone-50",
+                      ].join(" ")}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setActiveId(item.id)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <span className="block truncate font-medium text-stone-900">{item.file.name}</span>
+                        <span className={`block text-xs ${summary.tone}`}>{summary.label}</span>
+                      </button>
+                      <span className="shrink-0 text-xs text-stone-400">{formatFileSize(item.file.size)}</span>
+                      {item.uploadStatus !== "uploading" && (
+                        <button
+                          type="button"
+                          onClick={() => removeItem(item.id)}
+                          className="shrink-0 text-xs text-stone-500 hover:text-stone-800"
+                          aria-label={`Remove ${item.file.name}`}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+
+        {activeItem?.analyzeStatus === "error" && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            Failed to analyze {activeItem.file.name}: {activeItem.analyzeError}
+          </div>
+        )}
+
+        {activeItem && analysis && hasDuplicates && (
           <section
             className="rounded-lg border border-red-300 bg-red-50 p-6 shadow-sm"
             role="alertdialog"
             aria-labelledby="duplicate-title"
           >
             <h3 id="duplicate-title" className="font-medium text-red-950">
-              Document already exists
+              Document already exists — {activeItem.file.name}
             </h3>
             <p className="mt-1 text-sm text-red-900">
               This file matches one or more documents already stored in Georgette. Overwrite the
-              existing copy or cancel the upload.
+              existing copy, skip this file, or remove it from the queue.
             </p>
 
             <ul className="mt-4 space-y-2">
@@ -267,16 +582,16 @@ export function SmartDocumentUploadPage() {
                   <label
                     className={[
                       "flex cursor-pointer gap-3 rounded-md border px-4 py-3 text-sm",
-                      overwriteFileId === existing.fileId
+                      activeItem.overwriteFileId === existing.fileId
                         ? "border-red-700 bg-white"
                         : "border-red-200 bg-red-50/50",
                     ].join(" ")}
                   >
                     <input
                       type="radio"
-                      name="overwriteTarget"
-                      checked={overwriteFileId === existing.fileId}
-                      onChange={() => setOverwriteFileId(existing.fileId)}
+                      name={`overwriteTarget-${activeItem.id}`}
+                      checked={activeItem.overwriteFileId === existing.fileId}
+                      onChange={() => updateItem(activeItem.id, { overwriteFileId: existing.fileId })}
                       className="mt-1"
                     />
                     <span>
@@ -300,31 +615,64 @@ export function SmartDocumentUploadPage() {
             <div className="mt-5 flex flex-wrap gap-3">
               <button
                 type="button"
-                onClick={handleOverwrite}
-                disabled={!overwriteFileId}
+                onClick={handleOverwriteActive}
+                disabled={!activeItem.overwriteFileId}
                 className="rounded-md bg-red-800 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
                 Overwrite existing document
               </button>
               <button
                 type="button"
-                onClick={handleCancelDuplicate}
+                onClick={handleSkipDuplicate}
                 className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-900 hover:bg-red-100"
               >
-                Cancel upload
+                Skip this file
+              </button>
+              <button
+                type="button"
+                onClick={() => removeItem(activeItem.id)}
+                className="rounded-md border border-stone-300 bg-white px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+              >
+                Remove from queue
               </button>
             </div>
           </section>
         )}
 
-        {analysis && canProceed && (
+        {activeItem?.uploadStatus === "skipped" && (
+          <section className="rounded-md border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
+            Skipped {activeItem.file.name} because it already exists. Select another file from the queue
+            or add new files.
+          </section>
+        )}
+
+        {activeItem?.uploadStatus === "uploaded" && activeItem.uploadedRecord?.sourceId && (
+          <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+            <p className="font-medium">
+              {activeItem.overwriteFileId ? "Document overwritten." : "Document uploaded."}{" "}
+              {activeItem.file.name}
+            </p>
+            <p className="mt-1">
+              Saved on source{" "}
+              <Link
+                to={`/sources/${encodeURIComponent(activeItem.uploadedRecord.sourceId)}`}
+                className="font-medium underline"
+              >
+                {activeItem.uploadedRecord.sourceId}
+              </Link>
+              .
+            </p>
+          </div>
+        )}
+
+        {activeItem && canProceed && (activeItem.uploadStatus === "idle" || activeItem.uploadStatus === "error") && (
           <>
             {isOverwrite && (
               <section className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                <p className="font-medium">Overwrite confirmed</p>
+                <p className="font-medium">Overwrite confirmed — {activeItem.file.name}</p>
                 <p className="mt-1">
                   Uploading will replace the existing document on{" "}
-                  <strong>{selectedSourceLabel ?? selectedSourceId}</strong>.
+                  <strong>{activeItem.selectedSourceLabel ?? activeItem.selectedSourceId}</strong>.
                 </p>
               </section>
             )}
@@ -341,27 +689,27 @@ export function SmartDocumentUploadPage() {
               role="status"
             >
               <p className="font-medium">
-                {analysis.status === "confident"
-                  ? "Probable match found"
-                  : analysis.status === "ambiguous"
-                    ? "Multiple possible matches"
-                    : "Manual connection required"}
+                {activeItem.file.name} —{" "}
+                {analysis!.status === "confident"
+                  ? "probable match found"
+                  : analysis!.status === "ambiguous"
+                    ? "multiple possible matches"
+                    : "manual connection required"}
               </p>
               <p className="mt-1">{status?.text}</p>
-              {!analysis.contentMatchingAvailable && (
+              {!analysis!.contentMatchingAvailable && (
                 <p className="mt-2 text-xs opacity-80">
-                  Content matching was skipped because this file does not contain enough readable text
-                  (e.g. unscanned PDF or image). Filename matching was used instead.
+                  Content matching was skipped because this file does not contain enough readable text.
                 </p>
               )}
             </section>
 
-            {!isOverwrite && analysis.candidates.length > 0 && (
+            {!isOverwrite && analysis!.candidates.length > 0 && (
               <section className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
                 <h3 className="font-medium text-stone-800">Suggested matches</h3>
                 <ul className="mt-3 space-y-2">
-                  {analysis.candidates.map((candidate) => {
-                    const selected = selectedSourceId === candidate.sourceId;
+                  {analysis!.candidates.map((candidate) => {
+                    const selected = activeItem.selectedSourceId === candidate.sourceId;
                     return (
                       <li key={`${candidate.sourceId}-${candidate.fileId ?? candidate.method}`}>
                         <button
@@ -381,15 +729,6 @@ export function SmartDocumentUploadPage() {
                             </span>
                           </div>
                           <p className="mt-1 text-stone-600">{candidate.reason}</p>
-                          {candidate.fileName && (
-                            <p className="mt-1 text-xs text-stone-500">
-                              Related document: {candidate.fileName}
-                              {candidate.documentKind
-                                ? ` (${formatDocumentKind(candidate.documentKind)})`
-                                : ""}
-                              {candidate.pageNumber != null ? ` · page ${candidate.pageNumber}` : ""}
-                            </p>
-                          )}
                         </button>
                       </li>
                     );
@@ -398,7 +737,7 @@ export function SmartDocumentUploadPage() {
               </section>
             )}
 
-            <form onSubmit={(e) => void handleUpload(e)} className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
+            <form onSubmit={(e) => void handleUploadActive(e)} className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
               <h3 className="font-medium text-stone-800">
                 {isOverwrite ? "2. Confirm overwrite" : "2. Confirm source and upload"}
               </h3>
@@ -407,8 +746,8 @@ export function SmartDocumentUploadPage() {
                 <SearchableSelect
                   label="Source"
                   required
-                  value={selectedSourceId}
-                  displayLabel={selectedSourceLabel}
+                  value={activeItem.selectedSourceId}
+                  displayLabel={activeItem.selectedSourceLabel}
                   placeholder="Search sources by ID or filename…"
                   disabled={isOverwrite}
                   onSearch={async (q) => {
@@ -424,8 +763,10 @@ export function SmartDocumentUploadPage() {
                   }}
                   onChange={(id, option) => {
                     if (isOverwrite) return;
-                    setSelectedSourceId(id);
-                    setSelectedSourceLabel(option?.label ?? null);
+                    updateItem(activeItem.id, {
+                      selectedSourceId: id,
+                      selectedSourceLabel: option?.label ?? null,
+                    });
                   }}
                 />
 
@@ -433,8 +774,8 @@ export function SmartDocumentUploadPage() {
                   <label className="block text-sm">
                     <span className="mb-1 block font-medium text-stone-700">Document type</span>
                     <select
-                      value={documentKind}
-                      onChange={(e) => setDocumentKind(e.target.value)}
+                      value={activeItem.documentKind}
+                      onChange={(e) => updateItem(activeItem.id, { documentKind: e.target.value })}
                       className="w-full rounded-md border border-stone-300 px-3 py-2"
                     >
                       {UPLOAD_DOCUMENT_KINDS.map((kind) => (
@@ -449,8 +790,8 @@ export function SmartDocumentUploadPage() {
                     <input
                       type="number"
                       min={1}
-                      value={pageNumber}
-                      onChange={(e) => setPageNumber(e.target.value)}
+                      value={activeItem.pageNumber}
+                      onChange={(e) => updateItem(activeItem.id, { pageNumber: e.target.value })}
                       placeholder="Optional"
                       className="w-full rounded-md border border-stone-300 px-3 py-2"
                     />
@@ -459,8 +800,8 @@ export function SmartDocumentUploadPage() {
                     <span className="mb-1 block font-medium text-stone-700">Group label</span>
                     <input
                       type="text"
-                      value={groupLabel}
-                      onChange={(e) => setGroupLabel(e.target.value)}
+                      value={activeItem.groupLabel}
+                      onChange={(e) => updateItem(activeItem.id, { groupLabel: e.target.value })}
                       placeholder="Optional"
                       className="w-full rounded-md border border-stone-300 px-3 py-2"
                     />
@@ -470,8 +811,8 @@ export function SmartDocumentUploadPage() {
                 <label className="block text-sm">
                   <span className="mb-1 block font-medium text-stone-700">Notes</span>
                   <textarea
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
+                    value={activeItem.notes}
+                    onChange={(e) => updateItem(activeItem.id, { notes: e.target.value })}
                     rows={2}
                     className="w-full rounded-md border border-stone-300 px-3 py-2"
                     placeholder="Optional upload notes"
@@ -482,20 +823,14 @@ export function SmartDocumentUploadPage() {
               <div className="mt-6 flex flex-wrap gap-3">
                 <button
                   type="submit"
-                  disabled={!file || !selectedSourceId || uploading}
+                  disabled={!canUploadItem(activeItem)}
                   className="rounded-md bg-stone-800 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50"
                 >
-                  {uploading
-                    ? isOverwrite
-                      ? "Overwriting…"
-                      : "Uploading…"
-                    : isOverwrite
-                      ? "Overwrite document"
-                      : "Upload to source"}
+                  {isOverwrite ? "Overwrite document" : "Upload this file"}
                 </button>
-                {selectedSourceId && (
+                {activeItem.selectedSourceId && (
                   <Link
-                    to={`/sources/${encodeURIComponent(selectedSourceId)}`}
+                    to={`/sources/${encodeURIComponent(activeItem.selectedSourceId)}`}
                     className="rounded-md border border-stone-300 px-4 py-2 text-sm text-stone-700 hover:bg-stone-50"
                   >
                     View source
@@ -506,33 +841,35 @@ export function SmartDocumentUploadPage() {
           </>
         )}
 
-        {error && (
+        {activeItem?.uploadStatus === "error" && activeItem.uploadError && (
           <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-            {error}
+            {activeItem.file.name}: {activeItem.uploadError}
           </div>
         )}
 
-        {uploaded && uploaded.sourceId && (
+        {globalError && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            {globalError}
+          </div>
+        )}
+
+        {uploadedCount > 0 &&
+          queue.every(
+            (item) => item.uploadStatus === "uploaded" || item.uploadStatus === "skipped",
+          ) && (
           <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-900">
-            <p className="font-medium">
-              {isOverwrite ? "Document overwritten successfully." : "Document uploaded successfully."}
-            </p>
-            <p className="mt-1">
-              Saved as {uploaded.fileName} on source{" "}
-              <Link
-                to={`/sources/${encodeURIComponent(uploaded.sourceId)}`}
-                className="font-medium underline"
-              >
-                {uploaded.sourceId}
-              </Link>
-              .
-            </p>
+            <p className="font-medium">All queued files processed.</p>
             <button
               type="button"
-              onClick={() => navigate(`/sources/${encodeURIComponent(uploaded.sourceId!)}`)}
+              onClick={() => {
+                const lastUploaded = [...queue].reverse().find((item) => item.uploadedRecord?.sourceId);
+                if (lastUploaded?.uploadedRecord?.sourceId) {
+                  navigate(`/sources/${encodeURIComponent(lastUploaded.uploadedRecord.sourceId)}`);
+                }
+              }}
               className="mt-3 rounded-md bg-green-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
             >
-              Open source documents
+              Open last source
             </button>
           </div>
         )}
