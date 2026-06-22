@@ -10,7 +10,7 @@ APP_DIR="/var/www/georgette-research"
 REPO_URL="https://github.com/kutu95/georgette.git"
 APP_PORT="3010"
 SERVER_HOST="${DEPLOY_HOST:-192.168.0.146}"
-SERVER_USER="${DEPLOY_USER:-bowskill}"
+SERVER_USER="${DEPLOY_USER:-ubuntu}"
 SSH_IDENTITY="${SSH_IDENTITY_FILE:-$HOME/.ssh/georgette_deploy}"
 SSH_OPTS=(-o StrictHostKeyChecking=no)
 if [[ -f "${SSH_IDENTITY}" ]]; then

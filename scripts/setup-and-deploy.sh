@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SERVER_HOST="${DEPLOY_HOST:-192.168.0.146}"
-SERVER_USER="${DEPLOY_USER:-bowskill}"
+SERVER_USER="${DEPLOY_USER:-ubuntu}"
 KEY="$HOME/.ssh/georgette_deploy"
 
 if [[ ! -f "${KEY}" ]]; then
@@ -12,8 +12,8 @@ if [[ ! -f "${KEY}" ]]; then
 fi
 
 echo "==> Installing SSH key on ${SERVER_USER}@${SERVER_HOST}"
-echo "    Enter your server password when prompted."
-ssh-copy-id -i "${KEY}.pub" -o StrictHostKeyChecking=no "${SERVER_USER}@${SERVER_HOST}"
+echo "    Enter your server password when prompted (runs in your terminal)."
+ssh-copy-id -i "${KEY}.pub" -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no "${SERVER_USER}@${SERVER_HOST}"
 
 echo "==> Deploying Georgette Research"
 DEPLOY_HOST="${SERVER_HOST}" DEPLOY_USER="${SERVER_USER}" SSH_IDENTITY_FILE="${KEY}" \
