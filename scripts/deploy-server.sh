@@ -3,6 +3,7 @@
 # Usage:
 #   ./scripts/deploy-server.sh              # run ON the server
 #   ./scripts/deploy-server.sh --remote     # SSH from your Mac and deploy
+#   ./scripts/setup-and-deploy.sh           # first-time: SSH key + deploy
 set -euo pipefail
 
 APP_DIR="/var/www/georgette-research"
@@ -10,6 +11,11 @@ REPO_URL="https://github.com/kutu95/georgette.git"
 APP_PORT="3010"
 SERVER_HOST="${DEPLOY_HOST:-192.168.0.146}"
 SERVER_USER="${DEPLOY_USER:-bowskill}"
+SSH_IDENTITY="${SSH_IDENTITY_FILE:-$HOME/.ssh/georgette_deploy}"
+SSH_OPTS=(-o StrictHostKeyChecking=no)
+if [[ -f "${SSH_IDENTITY}" ]]; then
+  SSH_OPTS+=(-i "${SSH_IDENTITY}")
+fi
 
 deploy_on_server() {
   echo "==> Deploying Georgette Research in ${APP_DIR}"
@@ -48,7 +54,7 @@ deploy_on_server() {
 }
 
 if [[ "${1:-}" == "--remote" ]]; then
-  ssh "${SERVER_USER}@${SERVER_HOST}" "bash -s" <<'REMOTE'
+  ssh "${SSH_OPTS[@]}" "${SERVER_USER}@${SERVER_HOST}" "bash -s" <<'REMOTE'
 set -euo pipefail
 APP_DIR="/var/www/georgette-research"
 REPO_URL="https://github.com/kutu95/georgette.git"
@@ -77,6 +83,12 @@ pm2 save
 
 curl -sf "http://127.0.0.1:${APP_PORT}/api/health"
 echo
+
+# Ensure Cloudflare tunnel routes research.margies.app → this app
+if [[ -f /etc/cloudflared/config.yml ]] && ! grep -q "research.margies.app" /etc/cloudflared/config.yml; then
+  echo "NOTE: Add research.margies.app → http://127.0.0.1:3010 to /etc/cloudflared/config.yml"
+  echo "      See deploy/cloudflared-research.yml in the repo, then: sudo systemctl restart cloudflared"
+fi
 REMOTE
 else
   deploy_on_server

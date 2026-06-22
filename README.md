@@ -83,6 +83,64 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173).
 
+## Production deployment (research.margies.app)
+
+The app runs on the home Ubuntu server (`192.168.0.146`) behind Cloudflare Tunnel, same pattern as `metal.margies.app`.
+
+| Setting | Value |
+|---------|-------|
+| Server path | `/var/www/georgette-research` |
+| App port | **3010** |
+| Public URL | https://research.margies.app |
+| Process manager | PM2 (`georgette-research`) |
+| Database | `postgresql://postgres:postgres@127.0.0.1:54322/postgres` |
+
+### First-time deploy from your Mac
+
+On the same network as the server:
+
+```bash
+./scripts/setup-and-deploy.sh
+```
+
+Enter your Ubuntu SSH password when prompted. This installs an SSH key, clones the repo, runs migrations, builds, and starts PM2.
+
+### Subsequent deploys
+
+```bash
+./scripts/deploy-server.sh --remote
+```
+
+Or on the server directly:
+
+```bash
+cd /var/www/georgette-research
+./scripts/deploy-server.sh
+```
+
+### Cloudflare Tunnel
+
+DNS for `research.margies.app` is already in Cloudflare. Ensure the tunnel ingress includes:
+
+```yaml
+- hostname: research.margies.app
+  service: http://127.0.0.1:3010
+```
+
+See `deploy/cloudflared-research.yml` for full notes. After editing `/etc/cloudflared/config.yml`:
+
+```bash
+sudo systemctl restart cloudflared
+```
+
+### Verify
+
+```bash
+curl -s http://127.0.0.1:3010/api/health   # on server
+curl -s https://research.margies.app/api/health
+pm2 logs georgette-research --lines 30 --nostream
+```
+
 ## CSV Import
 
 Use **Import** in the sidebar. Required columns:
