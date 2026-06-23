@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { SearchableSelect } from "../components/SearchableSelect";
 import {
   api,
@@ -54,7 +54,7 @@ function statusMessage(result: DocumentMatchResult): { tone: "ok" | "warn" | "ne
   if (result.status === "confident" && result.recommended) {
     return {
       tone: "ok",
-      text: `Likely match: ${result.recommended.sourceLabel}. Review below and confirm, or choose a different source.`,
+      text: `Matched to ${result.recommended.sourceLabel}. Confident matches upload automatically; review only if you want to change the source.`,
     };
   }
   if (result.status === "ambiguous") {
@@ -146,6 +146,27 @@ function canUploadItem(item: UploadQueueItem): boolean {
   );
 }
 
+/** Confident source match, no duplicate — safe to upload without user review. */
+function isAutoUploadEligible(item: UploadQueueItem): boolean {
+  return (
+    item.analyzeStatus === "done" &&
+    item.uploadStatus === "idle" &&
+    item.analysis?.status === "confident" &&
+    item.analysis.existingDocuments.length === 0 &&
+    Boolean(item.selectedSourceId) &&
+    !item.overwriteFileId
+  );
+}
+
+function needsManualReview(item: UploadQueueItem): boolean {
+  if (item.analyzeStatus === "pending" || item.analyzeStatus === "analyzing") return true;
+  if (item.analyzeStatus === "error") return true;
+  if (item.uploadStatus === "uploading" || item.uploadStatus === "error") return true;
+  if (hasPendingDuplicates(item)) return true;
+  if (item.analysis?.status === "confident" && isAutoUploadEligible(item)) return false;
+  return true;
+}
+
 function queueItemSummary(item: UploadQueueItem): { label: string; tone: string } {
   if (item.analyzeStatus === "pending" || item.analyzeStatus === "analyzing") {
     return { label: item.analyzeStatus === "analyzing" ? "Analyzing…" : "Queued", tone: "text-stone-500" };
@@ -188,16 +209,17 @@ function formatFileSize(bytes: number): string {
 }
 
 export function SmartDocumentUploadPage() {
-  const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [queue, setQueue] = useState<UploadQueueItem[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [batchUploading, setBatchUploading] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const [autoUploadedCount, setAutoUploadedCount] = useState(0);
 
-  const activeItem = queue.find((item) => item.id === activeId) ?? null;
-  const readyCount = queue.filter(canUploadItem).length;
+  const reviewQueue = queue.filter(needsManualReview);
+  const activeItem = reviewQueue.find((item) => item.id === activeId) ?? reviewQueue[0] ?? null;
+  const readyCount = reviewQueue.filter(canUploadItem).length;
   const analyzingCount = queue.filter(
     (item) => item.analyzeStatus === "pending" || item.analyzeStatus === "analyzing",
   ).length;
@@ -211,53 +233,133 @@ export function SmartDocumentUploadPage() {
     );
   }, []);
 
-  const analyzeFile = useCallback(async (file: File) => {
-    const id = queueItemId(file);
-    setQueue((current) => {
-      const exists = current.some((item) => item.id === id);
-      const pendingItem: UploadQueueItem = {
-        id,
-        file,
-        analysis: null,
-        selectedSourceId: null,
-        selectedSourceLabel: null,
-        overwriteFileId: null,
-        duplicateResolved: false,
-        documentKind: "ORIGINAL",
-        pageNumber: "",
-        groupLabel: "",
-        notes: "",
-        analyzeStatus: "analyzing",
-        analyzeError: null,
-        uploadStatus: "idle",
-        uploadError: null,
-        uploadedRecord: null,
-      };
-      if (exists) {
-        return current.map((item) =>
-          item.id === id ? { ...pendingItem, uploadStatus: "idle", uploadedRecord: null } : item,
-        );
-      }
-      return [...current, pendingItem];
-    });
-    setActiveId((current) => current ?? id);
-
-    try {
-      const result = await api.analyzeSmartDocumentUpload(file);
-      setQueue((current) =>
-        current.map((item) => (item.id === id ? itemFromAnalysis(file, result) : item)),
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Analysis failed";
-      setQueue((current) =>
-        current.map((item) =>
-          item.id === id
-            ? { ...item, analyzeStatus: "error", analyzeError: message, analysis: null }
-            : item,
-        ),
-      );
-    }
+  const removeItemById = useCallback((id: string) => {
+    setQueue((current) => current.filter((item) => item.id !== id));
+    setActiveId((active) => (active === id ? null : active));
   }, []);
+
+  const performUpload = useCallback(
+    async (item: UploadQueueItem, options?: { auto?: boolean }): Promise<boolean> => {
+      if (!canUploadItem(item)) return false;
+
+      updateItem(item.id, { uploadStatus: "uploading", uploadError: null });
+      try {
+        await api.confirmSmartDocumentUpload(item.file, {
+          sourceId: item.selectedSourceId!,
+          documentKind: item.documentKind,
+          pageNumber: item.pageNumber ? Number(item.pageNumber) : undefined,
+          groupLabel: item.groupLabel.trim() || undefined,
+          notes: item.notes.trim() || undefined,
+          overwriteFileId: item.overwriteFileId ?? undefined,
+        });
+        removeItemById(item.id);
+        if (options?.auto) {
+          setAutoUploadedCount((count) => count + 1);
+        }
+        return true;
+      } catch (err) {
+        if (err instanceof SmartDocumentUploadError) {
+          updateItem(item.id, (current) => {
+            const next = {
+              ...current,
+              uploadStatus: "error" as const,
+              uploadError: err.message,
+              duplicateResolved: false,
+            };
+            if (err.existingDocuments.length === 1) {
+              return applyExistingToItem(
+                {
+                  ...next,
+                  analysis: current.analysis
+                    ? { ...current.analysis, existingDocuments: err.existingDocuments }
+                    : null,
+                },
+                err.existingDocuments[0],
+              );
+            }
+            if (current.analysis) {
+              return {
+                ...next,
+                analysis: { ...current.analysis, existingDocuments: err.existingDocuments },
+              };
+            }
+            return next;
+          });
+        } else {
+          updateItem(item.id, {
+            uploadStatus: "error",
+            uploadError: err instanceof Error ? err.message : "Upload failed",
+          });
+        }
+        return false;
+      }
+    },
+    [updateItem, removeItemById],
+  );
+
+  const tryAutoUpload = useCallback(
+    async (item: UploadQueueItem) => {
+      if (!isAutoUploadEligible(item)) return false;
+      return performUpload(item, { auto: true });
+    },
+    [performUpload],
+  );
+
+  const analyzeFile = useCallback(
+    async (file: File) => {
+      const id = queueItemId(file);
+      setQueue((current) => {
+        const exists = current.some((item) => item.id === id);
+        const pendingItem: UploadQueueItem = {
+          id,
+          file,
+          analysis: null,
+          selectedSourceId: null,
+          selectedSourceLabel: null,
+          overwriteFileId: null,
+          duplicateResolved: false,
+          documentKind: "ORIGINAL",
+          pageNumber: "",
+          groupLabel: "",
+          notes: "",
+          analyzeStatus: "analyzing",
+          analyzeError: null,
+          uploadStatus: "idle",
+          uploadError: null,
+          uploadedRecord: null,
+        };
+        if (exists) {
+          return current.map((item) =>
+            item.id === id ? { ...pendingItem, uploadStatus: "idle", uploadedRecord: null } : item,
+          );
+        }
+        return [...current, pendingItem];
+      });
+
+      try {
+        const result = await api.analyzeSmartDocumentUpload(file);
+        const item = itemFromAnalysis(file, result);
+        setQueue((current) => current.map((i) => (i.id === id ? item : i)));
+
+        if (isAutoUploadEligible(item)) {
+          await tryAutoUpload(item);
+        } else {
+          setActiveId((current) => current ?? id);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Analysis failed";
+        setQueue((current) =>
+          current.map((item) =>
+            item.id === id
+              ? { ...item, analyzeStatus: "error", analyzeError: message, analysis: null }
+              : item,
+          ),
+        );
+        setActiveId((current) => current ?? id);
+      }
+    },
+    [tryAutoUpload],
+  );
 
   const addFiles = useCallback(
     async (files: File[]) => {
@@ -301,6 +403,7 @@ export function SmartDocumentUploadPage() {
     setQueue([]);
     setActiveId(null);
     setGlobalError(null);
+    setAutoUploadedCount(0);
     resetFileInput(fileInputRef.current);
   }
 
@@ -326,14 +429,7 @@ export function SmartDocumentUploadPage() {
 
   function handleSkipDuplicate() {
     if (!activeItem) return;
-    updateItem(activeItem.id, {
-      uploadStatus: "skipped",
-      duplicateResolved: false,
-      uploadError: null,
-    });
-    const index = queue.findIndex((item) => item.id === activeItem.id);
-    const next = queue.slice(index + 1).find((item) => item.uploadStatus === "idle");
-    if (next) setActiveId(next.id);
+    removeItem(activeItem.id);
   }
 
   function selectCandidate(candidate: DocumentMatchCandidate) {
@@ -347,60 +443,7 @@ export function SmartDocumentUploadPage() {
   }
 
   async function uploadItem(item: UploadQueueItem): Promise<boolean> {
-    if (!canUploadItem(item)) return false;
-
-    updateItem(item.id, { uploadStatus: "uploading", uploadError: null });
-    try {
-      const created = await api.confirmSmartDocumentUpload(item.file, {
-        sourceId: item.selectedSourceId!,
-        documentKind: item.documentKind,
-        pageNumber: item.pageNumber ? Number(item.pageNumber) : undefined,
-        groupLabel: item.groupLabel.trim() || undefined,
-        notes: item.notes.trim() || undefined,
-        overwriteFileId: item.overwriteFileId ?? undefined,
-      });
-      updateItem(item.id, {
-        uploadStatus: "uploaded",
-        uploadedRecord: created,
-        uploadError: null,
-      });
-      return true;
-    } catch (err) {
-      if (err instanceof SmartDocumentUploadError) {
-        updateItem(item.id, (current) => {
-          const next = {
-            ...current,
-            uploadStatus: "error" as const,
-            uploadError: err.message,
-            duplicateResolved: false,
-          };
-          if (err.existingDocuments.length === 1) {
-            return applyExistingToItem(
-              {
-                ...next,
-                analysis: current.analysis
-                  ? { ...current.analysis, existingDocuments: err.existingDocuments }
-                  : null,
-              },
-              err.existingDocuments[0],
-            );
-          }
-          if (current.analysis) {
-            return {
-              ...next,
-              analysis: { ...current.analysis, existingDocuments: err.existingDocuments },
-            };
-          }
-          return next;
-        });
-      } else {
-        updateItem(item.id, {
-          uploadStatus: "error",
-          uploadError: err instanceof Error ? err.message : "Upload failed",
-        });
-      }
-      return false;
-    }
+    return performUpload(item);
   }
 
   async function handleUploadActive(e: React.FormEvent) {
@@ -410,7 +453,7 @@ export function SmartDocumentUploadPage() {
   }
 
   async function handleUploadAllReady() {
-    const ready = queue.filter(canUploadItem);
+    const ready = reviewQueue.filter(canUploadItem);
     if (ready.length === 0) return;
     setBatchUploading(true);
     setGlobalError(null);
@@ -426,24 +469,39 @@ export function SmartDocumentUploadPage() {
   }
 
   useEffect(() => {
-    if (activeId && queue.some((item) => item.id === activeId)) return;
-    setActiveId(queue[0]?.id ?? null);
-  }, [queue, activeId]);
+    setActiveId((current) => {
+      if (current && queue.some((item) => item.id === current && needsManualReview(item))) {
+        return current;
+      }
+      return queue.find(needsManualReview)?.id ?? null;
+    });
+  }, [queue]);
 
   const analysis = activeItem?.analysis ?? null;
   const hasDuplicates = Boolean(activeItem && hasPendingDuplicates(activeItem));
   const canProceed = Boolean(activeItem && activeItem.analyzeStatus === "done" && !hasDuplicates);
   const isOverwrite = Boolean(activeItem?.overwriteFileId && activeItem.duplicateResolved);
   const status = analysis && canProceed ? statusMessage(analysis) : null;
-  const uploadedCount = queue.filter((item) => item.uploadStatus === "uploaded").length;
 
   return (
     <div className="max-w-3xl">
       <h2 className="text-2xl font-semibold text-stone-900">Smart Document Upload</h2>
       <p className="mt-1 text-sm text-stone-600">
-        Drop multiple documents or select several at once. Georgette checks each file for duplicates,
-        then matches it to a source by filename and content. Review anything uncertain before saving.
+        Drop multiple documents or select several at once. Confident matches upload automatically;
+        only uncertain files (duplicates, ambiguous matches, or unknown sources) stay in the queue
+        for your review.
       </p>
+
+      {autoUploadedCount > 0 && (
+        <div className="mt-4 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-900">
+          <p className="font-medium">
+            {autoUploadedCount} file{autoUploadedCount === 1 ? "" : "s"} uploaded automatically
+          </p>
+          <p className="mt-1 text-green-800">
+            Confident source matches were saved without manual confirmation.
+          </p>
+        </div>
+      )}
 
       <div className="mt-6 space-y-6">
         <section className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
@@ -483,13 +541,13 @@ export function SmartDocumentUploadPage() {
             </p>
           </div>
 
-          {queue.length > 0 && (
+          {reviewQueue.length > 0 && (
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <p className="text-sm text-stone-600">
-                {queue.length} file{queue.length === 1 ? "" : "s"}
+                {reviewQueue.length} file{reviewQueue.length === 1 ? "" : "s"} need review
                 {analyzingCount > 0 ? ` · ${analyzingCount} analyzing` : ""}
                 {readyCount > 0 ? ` · ${readyCount} ready` : ""}
-                {uploadedCount > 0 ? ` · ${uploadedCount} uploaded` : ""}
+                {autoUploadedCount > 0 ? ` · ${autoUploadedCount} auto-uploaded` : ""}
               </p>
               <div className="flex flex-wrap gap-2">
                 {readyCount > 0 && (
@@ -514,11 +572,11 @@ export function SmartDocumentUploadPage() {
           )}
         </section>
 
-        {queue.length > 0 && (
+        {reviewQueue.length > 0 && (
           <section className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
-            <h3 className="px-2 font-medium text-stone-800">File queue</h3>
+            <h3 className="px-2 font-medium text-stone-800">Needs review</h3>
             <ul className="mt-2 max-h-56 space-y-1 overflow-auto">
-              {queue.map((item) => {
+              {reviewQueue.map((item) => {
                 const summary = queueItemSummary(item);
                 const isActive = item.id === activeId;
                 return (
@@ -639,28 +697,12 @@ export function SmartDocumentUploadPage() {
           </section>
         )}
 
-        {activeItem?.uploadStatus === "skipped" && (
-          <section className="rounded-md border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
-            Skipped {activeItem.file.name} because it already exists. Select another file from the queue
-            or add new files.
-          </section>
-        )}
-
-        {activeItem?.uploadStatus === "uploaded" && activeItem.uploadedRecord?.sourceId && (
+        {reviewQueue.length === 0 && autoUploadedCount > 0 && (
           <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-900">
-            <p className="font-medium">
-              {activeItem.overwriteFileId ? "Document overwritten." : "Document uploaded."}{" "}
-              {activeItem.file.name}
-            </p>
+            <p className="font-medium">All files processed.</p>
             <p className="mt-1">
-              Saved on source{" "}
-              <Link
-                to={`/sources/${encodeURIComponent(activeItem.uploadedRecord.sourceId)}`}
-                className="font-medium underline"
-              >
-                {activeItem.uploadedRecord.sourceId}
-              </Link>
-              .
+              {autoUploadedCount} confident match{autoUploadedCount === 1 ? "" : "es"} uploaded
+              automatically with no review needed.
             </p>
           </div>
         )}
@@ -850,27 +892,6 @@ export function SmartDocumentUploadPage() {
         {globalError && (
           <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
             {globalError}
-          </div>
-        )}
-
-        {uploadedCount > 0 &&
-          queue.every(
-            (item) => item.uploadStatus === "uploaded" || item.uploadStatus === "skipped",
-          ) && (
-          <div className="rounded-lg border border-green-200 bg-green-50 p-4 text-sm text-green-900">
-            <p className="font-medium">All queued files processed.</p>
-            <button
-              type="button"
-              onClick={() => {
-                const lastUploaded = [...queue].reverse().find((item) => item.uploadedRecord?.sourceId);
-                if (lastUploaded?.uploadedRecord?.sourceId) {
-                  navigate(`/sources/${encodeURIComponent(lastUploaded.uploadedRecord.sourceId)}`);
-                }
-              }}
-              className="mt-3 rounded-md bg-green-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700"
-            >
-              Open last source
-            </button>
           </div>
         )}
       </div>
