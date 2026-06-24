@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { DocumentViewModal } from "./DocumentViewModal";
+import { FormattedTextContent } from "./FormattedTextContent";
 import { api, type CombinedOcrResult, type SourceDocumentRecord } from "../lib/api";
 import { groupDocumentsByLabel, UPLOAD_DOCUMENT_KINDS } from "../lib/documentKinds";
 import { formatDocumentKind, formatPageLabel } from "../lib/format";
@@ -44,6 +46,7 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
   const [combinedOcr, setCombinedOcr] = useState<CombinedOcrResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [viewingDocument, setViewingDocument] = useState<SourceDocumentRecord | null>(null);
 
   const ocrPageCount = documents.filter((d) => d.documentKind === "OCR").length;
   const combinedDoc = documents.find((d) => d.documentKind === "COMBINED_OCR");
@@ -371,14 +374,10 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
               </a>
             )}
           </div>
-          <textarea
-            readOnly
-            value={combinedOcr.text}
-            rows={8}
-            className="w-full rounded-md border border-sky-200 bg-white px-3 py-2 font-mono text-xs text-stone-800"
-          />
+          <FormattedTextContent content={combinedOcr.text} className="mt-2" />
           <p className="mt-2 text-xs text-sky-800">
-            Built automatically from OCR page documents, ordered by page number.
+            Built automatically from OCR page documents, ordered by page number. Formatted view
+            does not change the stored file.
           </p>
         </section>
       )}
@@ -412,14 +411,13 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
                         </p>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <a
-                          href={api.documentContentUrl(doc.fileId)}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => setViewingDocument(doc)}
                           className="rounded border border-stone-300 px-2 py-1 text-xs text-stone-700 hover:bg-stone-50"
                         >
                           View
-                        </a>
+                        </button>
                         <a
                           href={api.documentContentUrl(doc.fileId, true)}
                           className="rounded border border-stone-300 px-2 py-1 text-xs text-stone-700 hover:bg-stone-50"
@@ -442,6 +440,10 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
             );
           })}
         </div>
+      )}
+
+      {viewingDocument && (
+        <DocumentViewModal document={viewingDocument} onClose={() => setViewingDocument(null)} />
       )}
     </section>
   );

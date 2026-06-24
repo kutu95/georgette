@@ -477,6 +477,14 @@ export const api = {
     request<void>(`/documents/${encodeURIComponent(fileId)}`, { method: "DELETE" }),
   documentContentUrl: (fileId: string, download = false) =>
     `${API_BASE}/documents/${encodeURIComponent(fileId)}/content${download ? "?download=1" : ""}`,
+  fetchDocumentContent: async (fileId: string) => {
+    const res = await fetch(`${API_BASE}/documents/${encodeURIComponent(fileId)}/content`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error((data as { error?: string }).error ?? "Failed to load document");
+    }
+    return res.text();
+  },
   analyzeSmartDocumentUpload: async (file: File) => {
     const form = new FormData();
     form.append("file", file);

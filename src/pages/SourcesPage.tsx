@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { ResizableTh } from "../components/ResizableTh";
+import { useResizableColumns } from "../hooks/useResizableColumns";
 import { api, type SourceFilterOptions, type SourceRecord } from "../lib/api";
 import { sourceConfig } from "../lib/entities";
 
@@ -9,6 +11,17 @@ const SORT_OPTIONS = [
   { value: "category", label: "Category" },
   { value: "importance", label: "Importance" },
 ] as const;
+
+const SOURCE_TABLE_COLUMNS = [
+  { id: "sourceId", label: "ID", defaultWidth: 140 },
+  { id: "currentFileName", label: "File Name", defaultWidth: 220 },
+  { id: "suggestedStandardFileName", label: "Standard Name", defaultWidth: 220 },
+  { id: "category", label: "Category", defaultWidth: 130 },
+  { id: "importance", label: "Importance", defaultWidth: 110 },
+  { id: "originalOrDerived", label: "Original/Derived", defaultWidth: 130 },
+] as const;
+
+const SOURCE_TABLE_STORAGE_KEY = "georgette.sources-table.column-widths";
 
 
 export function SourcesPage() {
@@ -35,6 +48,11 @@ export function SourcesPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
+
+  const { widths, startResize, resetWidths } = useResizableColumns(
+    SOURCE_TABLE_STORAGE_KEY,
+    SOURCE_TABLE_COLUMNS.map((col) => ({ id: col.id, defaultWidth: col.defaultWidth })),
+  );
 
   const updateParams = useCallback(
     (updates: Record<string, string>) => {
@@ -334,46 +352,96 @@ export function SourcesPage() {
       {!loading && items.length === 0 ? (
         <p className="text-sm text-stone-500">No sources match your search.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-stone-200 bg-white shadow-sm">
-          <table className="min-w-max w-full text-left text-sm">
-            <thead className="border-b border-stone-200 bg-stone-50">
-              <tr>
-                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">ID</th>
-                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">File Name</th>
-                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">Standard Name</th>
-                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">Category</th>
-                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">Importance</th>
-                <th className="whitespace-nowrap px-4 py-3 font-medium text-stone-700">Original/Derived</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-stone-100">
-              {items.map((item) => (
-                <tr
-                  key={item.sourceId}
-                  onClick={() =>
-                    navigate(`/sources/${encodeURIComponent(item.sourceId)}?${searchParams.toString()}`)
-                  }
-                  className="cursor-pointer hover:bg-stone-50"
-                >
-                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-stone-800">
-                    {item.sourceId}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-800">
-                    {item.currentFileName ?? "—"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-800">
-                    {item.suggestedStandardFileName ?? "—"}
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-800">{item.category ?? "—"}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-800">{item.importance ?? "—"}</td>
-                  <td className="whitespace-nowrap px-4 py-3 text-stone-800">
-                    {item.originalOrDerived ?? "—"}
-                  </td>
+        <>
+          <p className="mb-2 text-xs text-stone-500">
+            Drag the right edge of a column header to resize.{" "}
+            <button
+              type="button"
+              onClick={resetWidths}
+              className="text-stone-600 underline hover:text-stone-900"
+            >
+              Reset column widths
+            </button>
+          </p>
+          <div className="overflow-x-auto rounded-lg border border-stone-200 bg-white shadow-sm">
+            <table className="w-full text-left text-sm" style={{ tableLayout: "fixed" }}>
+              <thead className="border-b border-stone-200 bg-stone-50">
+                <tr>
+                  {SOURCE_TABLE_COLUMNS.map((col) => (
+                    <ResizableTh
+                      key={col.id}
+                      columnId={col.id}
+                      width={widths[col.id]}
+                      onResizeStart={startResize}
+                    >
+                      {col.label}
+                    </ResizableTh>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-stone-100">
+                {items.map((item) => (
+                  <tr
+                    key={item.sourceId}
+                    onClick={() =>
+                      navigate(`/sources/${encodeURIComponent(item.sourceId)}?${searchParams.toString()}`)
+                    }
+                    className="cursor-pointer hover:bg-stone-50"
+                  >
+                    <td
+                      className="truncate px-4 py-3 font-mono text-xs text-stone-800"
+                      style={{ width: widths.sourceId, maxWidth: widths.sourceId }}
+                      title={item.sourceId}
+                    >
+                      {item.sourceId}
+                    </td>
+                    <td
+                      className="truncate px-4 py-3 text-stone-800"
+                      style={{ width: widths.currentFileName, maxWidth: widths.currentFileName }}
+                      title={item.currentFileName ?? undefined}
+                    >
+                      {item.currentFileName ?? "—"}
+                    </td>
+                    <td
+                      className="truncate px-4 py-3 text-stone-800"
+                      style={{
+                        width: widths.suggestedStandardFileName,
+                        maxWidth: widths.suggestedStandardFileName,
+                      }}
+                      title={item.suggestedStandardFileName ?? undefined}
+                    >
+                      {item.suggestedStandardFileName ?? "—"}
+                    </td>
+                    <td
+                      className="truncate px-4 py-3 text-stone-800"
+                      style={{ width: widths.category, maxWidth: widths.category }}
+                      title={item.category ?? undefined}
+                    >
+                      {item.category ?? "—"}
+                    </td>
+                    <td
+                      className="truncate px-4 py-3 text-stone-800"
+                      style={{ width: widths.importance, maxWidth: widths.importance }}
+                      title={item.importance ?? undefined}
+                    >
+                      {item.importance ?? "—"}
+                    </td>
+                    <td
+                      className="truncate px-4 py-3 text-stone-800"
+                      style={{
+                        width: widths.originalOrDerived,
+                        maxWidth: widths.originalOrDerived,
+                      }}
+                      title={item.originalOrDerived ?? undefined}
+                    >
+                      {item.originalOrDerived ?? "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );
