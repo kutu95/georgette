@@ -1,4 +1,13 @@
+import {
+  textDocumentFileName,
+  type PasteTextSourceInput,
+  type PasteTextSourceResult,
+} from "./pasteTextSource";
+
 const API_BASE = "/api";
+
+export { textDocumentFileName };
+export type { PasteTextSourceInput, PasteTextSourceResult };
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -101,6 +110,13 @@ export class SmartDocumentUploadError extends Error {
   }
 }
 
+export type SourcePrimaryDocument = {
+  fileId: string;
+  fileName: string | null;
+  mimeType: string | null;
+  documentKind: string;
+};
+
 export type SourceRecord = {
   sourceId: string;
   currentFileName: string | null;
@@ -114,6 +130,8 @@ export type SourceRecord = {
   sourceLevel: number | null;
   createdAt: string;
   updatedAt: string;
+  documentCount?: number;
+  primaryDocument?: SourcePrimaryDocument | null;
   parent?: { sourceId: string; currentFileName: string | null } | null;
   children?: { sourceId: string; currentFileName: string | null }[];
 };
@@ -473,6 +491,44 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  createSourceFromPastedText: async (
+    input: PasteTextSourceInput,
+  ): Promise<PasteTextSourceResult> => {
+    const sourceId = input.sourceId.trim();
+    const fileName = textDocumentFileName(input.title);
+    let sourceCreated = false;
+
+    try {
+      await request<SourceRecord>(`/sources/${encodeURIComponent(sourceId)}`);
+    } catch {
+      await request<SourceRecord>("/sources", {
+        method: "POST",
+        body: JSON.stringify({
+          sourceId,
+          currentFileName: fileName,
+          suggestedStandardFileName: fileName,
+          category: input.category?.trim() || null,
+          importance: input.importance?.trim() || null,
+          notes: input.sourceNotes?.trim() || null,
+        }),
+      });
+      sourceCreated = true;
+    }
+
+    const document = await request<SourceDocumentRecord>(
+      `/sources/${encodeURIComponent(sourceId)}/documents`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          text: input.text.trim(),
+          fileName,
+          documentKind: "TEXT",
+        }),
+      },
+    );
+
+    return { sourceId, sourceCreated, document };
+  },
   removeDocument: (fileId: string) =>
     request<void>(`/documents/${encodeURIComponent(fileId)}`, { method: "DELETE" }),
   documentContentUrl: (fileId: string, download = false) =>

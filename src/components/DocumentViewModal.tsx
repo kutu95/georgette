@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { api, type SourceDocumentRecord } from "../lib/api";
-import { isTextViewableDocument } from "../lib/normalizeDisplayText";
+import { api } from "../lib/api";
+import { getDocumentViewMode, type ViewableDocument } from "../lib/documentView";
 import { FormattedTextContent } from "./FormattedTextContent";
 
 type Props = {
-  document: SourceDocumentRecord;
+  document: ViewableDocument;
   onClose: () => void;
 };
 
@@ -14,11 +14,12 @@ export function DocumentViewModal({ document, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const title = document.fileName ?? document.fileId;
-  const textViewable = isTextViewableDocument(
+  const viewMode = getDocumentViewMode(
     document.mimeType,
     document.fileName,
     document.documentKind,
   );
+  const contentUrl = api.documentContentUrl(document.fileId);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -29,8 +30,10 @@ export function DocumentViewModal({ document, onClose }: Props) {
   }, [onClose]);
 
   useEffect(() => {
-    if (!textViewable) {
+    if (viewMode !== "text") {
       setLoading(false);
+      setContent(null);
+      setError(null);
       return;
     }
 
@@ -54,7 +57,9 @@ export function DocumentViewModal({ document, onClose }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [document.fileId, textViewable]);
+  }, [document.fileId, viewMode]);
+
+  const modalWidth = viewMode === "pdf" || viewMode === "image" ? "max-w-5xl" : "max-w-3xl";
 
   return (
     <div
@@ -65,7 +70,7 @@ export function DocumentViewModal({ document, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="flex max-h-[90vh] w-full max-w-3xl flex-col rounded-lg border border-stone-200 bg-white shadow-xl"
+        className={`flex max-h-[90vh] w-full ${modalWidth} flex-col rounded-lg border border-stone-200 bg-white shadow-xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-5 py-4">
@@ -82,16 +87,6 @@ export function DocumentViewModal({ document, onClose }: Props) {
             >
               Download
             </a>
-            {!textViewable && (
-              <a
-                href={api.documentContentUrl(document.fileId)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded border border-stone-300 px-2 py-1 text-xs text-stone-700 hover:bg-stone-50"
-              >
-                Open in tab
-              </a>
-            )}
             <button
               type="button"
               onClick={onClose}
@@ -103,24 +98,49 @@ export function DocumentViewModal({ document, onClose }: Props) {
         </div>
 
         <div className="overflow-y-auto px-5 py-4">
-          {!textViewable && (
-            <p className="text-sm text-stone-600">
-              This file type is best viewed in your browser or downloaded. Use{" "}
-              <strong>Open in tab</strong> for PDFs and images.
-            </p>
+          {viewMode === "pdf" && (
+            <iframe
+              src={contentUrl}
+              title={title}
+              className="h-[75vh] w-full rounded-md border border-stone-200 bg-stone-50"
+            />
           )}
 
-          {textViewable && loading && (
+          {viewMode === "image" && (
+            <div className="flex justify-center rounded-md border border-stone-200 bg-stone-50 p-4">
+              <img
+                src={contentUrl}
+                alt={title}
+                className="max-h-[75vh] max-w-full object-contain"
+              />
+            </div>
+          )}
+
+          {viewMode === "unsupported" && (
+            <div className="space-y-3 text-sm text-stone-600">
+              <p>This file type cannot be previewed in the browser.</p>
+              <a
+                href={contentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block rounded-md border border-stone-300 px-3 py-2 text-stone-700 hover:bg-stone-50"
+              >
+                Open in new tab
+              </a>
+            </div>
+          )}
+
+          {viewMode === "text" && loading && (
             <p className="text-sm text-stone-500">Loading document…</p>
           )}
 
-          {textViewable && error && (
+          {viewMode === "text" && error && (
             <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
               {error}
             </div>
           )}
 
-          {textViewable && content != null && !loading && !error && (
+          {viewMode === "text" && content != null && !loading && !error && (
             <FormattedTextContent content={content} />
           )}
         </div>

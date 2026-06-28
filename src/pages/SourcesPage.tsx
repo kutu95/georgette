@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { DocumentViewModal } from "../components/DocumentViewModal";
+import { PasteTextSourceForm } from "../components/PasteTextSourceForm";
 import { ResizableTh } from "../components/ResizableTh";
+import { SourceDocumentPickerModal } from "../components/SourceDocumentPickerModal";
+import { ViewIconButton } from "../components/ViewIconButton";
 import { useResizableColumns } from "../hooks/useResizableColumns";
-import { api, type SourceFilterOptions, type SourceRecord } from "../lib/api";
+import { api, type SourceDocumentRecord, type SourceFilterOptions, type SourceRecord } from "../lib/api";
+import type { ViewableDocument } from "../lib/documentView";
+import { formatSourceLabel } from "../lib/format";
 import { sourceConfig } from "../lib/entities";
 
 const SORT_OPTIONS = [
@@ -14,6 +20,7 @@ const SORT_OPTIONS = [
 
 const SOURCE_TABLE_COLUMNS = [
   { id: "sourceId", label: "ID", defaultWidth: 140 },
+  { id: "view", label: "", defaultWidth: 52 },
   { id: "currentFileName", label: "File Name", defaultWidth: 220 },
   { id: "suggestedStandardFileName", label: "Standard Name", defaultWidth: 220 },
   { id: "category", label: "Category", defaultWidth: 130 },
@@ -46,8 +53,16 @@ export function SourcesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [showPasteForm, setShowPasteForm] = useState(false);
   const [form, setForm] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
+  const [viewingDocument, setViewingDocument] = useState<ViewableDocument | null>(null);
+  const [documentPicker, setDocumentPicker] = useState<{
+    sourceLabel: string;
+    documents: SourceDocumentRecord[];
+  } | null>(null);
+  const [viewError, setViewError] = useState<string | null>(null);
+  const [viewLoadingId, setViewLoadingId] = useState<string | null>(null);
 
   const { widths, startResize, resetWidths } = useResizableColumns(
     SOURCE_TABLE_STORAGE_KEY,
@@ -99,7 +114,13 @@ export function SourcesPage() {
       }
     }
     setForm(empty);
+    setShowPasteForm(false);
     setShowForm(true);
+  }
+
+  function openPasteForm() {
+    setShowForm(false);
+    setShowPasteForm(true);
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -129,6 +150,45 @@ export function SourcesPage() {
 
   const hasActiveFilters = Boolean(q || category || importance || originalOrDerived);
 
+  async function handleViewSource(item: SourceRecord, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!item.documentCount) {
+      setViewError(`No documents uploaded for ${item.sourceId}. Add documents on the source detail page.`);
+      return;
+    }
+
+    setViewError(null);
+
+    if (item.documentCount === 1 && item.primaryDocument) {
+      setViewingDocument(item.primaryDocument);
+      return;
+    }
+
+    setViewLoadingId(item.sourceId);
+    try {
+      const documents = await api.getSourceDocuments(item.sourceId);
+      const viewable = documents.filter(
+        (doc) => doc.filePath && doc.documentKind !== "COMBINED_OCR",
+      );
+      if (viewable.length === 0) {
+        setViewError(`No viewable documents for ${item.sourceId}.`);
+        return;
+      }
+      if (viewable.length === 1) {
+        setViewingDocument(viewable[0]);
+        return;
+      }
+      setDocumentPicker({
+        sourceLabel: formatSourceLabel(item),
+        documents: viewable,
+      });
+    } catch (err) {
+      setViewError(err instanceof Error ? err.message : "Failed to load documents");
+    } finally {
+      setViewLoadingId(null);
+    }
+  }
+
   return (
     <div className="min-w-0">
       <div className="mb-6 flex items-start justify-between gap-4">
@@ -136,13 +196,22 @@ export function SourcesPage() {
           <h2 className="text-2xl font-semibold text-stone-900">{sourceConfig.title}</h2>
           <p className="mt-1 text-sm text-stone-600">{sourceConfig.description}</p>
         </div>
-        <button
-          type="button"
-          onClick={openNew}
-          className="rounded-md bg-stone-800 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700"
-        >
-          Add Source
-        </button>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={openPasteForm}
+            className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 hover:bg-stone-50"
+          >
+            Paste as Source
+          </button>
+          <button
+            type="button"
+            onClick={openNew}
+            className="rounded-md bg-stone-800 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700"
+          >
+            Add Source
+          </button>
+        </div>
       </div>
 
       <div className="mb-6 space-y-4 rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
@@ -266,10 +335,30 @@ export function SourcesPage() {
         )}
       </p>
 
+      {viewError && (
+        <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {viewError}
+          <button
+            type="button"
+            onClick={() => setViewError(null)}
+            className="ml-3 text-amber-800 underline hover:text-amber-950"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {error && (
         <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error}
         </div>
+      )}
+
+      {showPasteForm && (
+        <PasteTextSourceForm
+          onSaved={() => void load()}
+          onCancel={() => setShowPasteForm(false)}
+        />
       )}
 
       {showForm && (
@@ -374,7 +463,11 @@ export function SourcesPage() {
                       width={widths[col.id]}
                       onResizeStart={startResize}
                     >
-                      {col.label}
+                      {col.id === "view" ? (
+                        <span className="sr-only">View</span>
+                      ) : (
+                        col.label
+                      )}
                     </ResizableTh>
                   ))}
                 </tr>
@@ -394,6 +487,21 @@ export function SourcesPage() {
                       title={item.sourceId}
                     >
                       {item.sourceId}
+                    </td>
+                    <td
+                      className="px-2 py-2 text-center"
+                      style={{ width: widths.view, maxWidth: widths.view }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ViewIconButton
+                        disabled={!item.documentCount || viewLoadingId === item.sourceId}
+                        label={
+                          item.documentCount
+                            ? `View document for ${item.sourceId}`
+                            : `No document for ${item.sourceId}`
+                        }
+                        onClick={(e) => void handleViewSource(item, e)}
+                      />
                     </td>
                     <td
                       className="truncate px-4 py-3 text-stone-800"
@@ -442,6 +550,25 @@ export function SourcesPage() {
             </table>
           </div>
         </>
+      )}
+
+      {documentPicker && (
+        <SourceDocumentPickerModal
+          sourceLabel={documentPicker.sourceLabel}
+          documents={documentPicker.documents}
+          onSelect={(doc) => {
+            setDocumentPicker(null);
+            setViewingDocument(doc);
+          }}
+          onClose={() => setDocumentPicker(null)}
+        />
+      )}
+
+      {viewingDocument && (
+        <DocumentViewModal
+          document={viewingDocument}
+          onClose={() => setViewingDocument(null)}
+        />
       )}
     </div>
   );

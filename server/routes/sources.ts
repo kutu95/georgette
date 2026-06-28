@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
+import { pickPrimaryDocument } from "../documentView.js";
 
 const SORT_FIELDS = {
   source_id: "sourceId",
@@ -160,10 +161,36 @@ sourcesRouter.get("/", async (req, res) => {
     const where = buildWhere(req.query);
     const orderBy = buildOrderBy(req.query);
 
-    const [total, items] = await Promise.all([
+    const [total, rows] = await Promise.all([
       prisma.source.count(),
-      prisma.source.findMany({ where, orderBy }),
+      prisma.source.findMany({
+        where,
+        orderBy,
+        include: {
+          files: {
+            where: { filePath: { not: null } },
+            select: {
+              fileId: true,
+              fileName: true,
+              mimeType: true,
+              documentKind: true,
+              pageNumber: true,
+              createdAt: true,
+              filePath: true,
+            },
+          },
+        },
+      }),
     ]);
+
+    const items = rows.map(({ files, ...source }) => {
+      const viewableFiles = files.filter((file) => file.documentKind !== "COMBINED_OCR");
+      return {
+        ...source,
+        documentCount: viewableFiles.length,
+        primaryDocument: pickPrimaryDocument(files),
+      };
+    });
 
     res.json({
       items,
