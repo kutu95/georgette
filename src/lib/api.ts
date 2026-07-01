@@ -23,8 +23,18 @@ function appendDocumentUploadMeta(form: FormData, meta: SourceDocumentUploadMeta
 export { textDocumentFileName };
 export type { PasteTextSourceInput, PasteTextSourceResult };
 
+export type AuthStatus = {
+  enabled: boolean;
+  required: boolean;
+  authenticated: boolean;
+  lan: boolean;
+};
+
+const defaultFetchInit: RequestInit = { credentials: "include" };
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
+    ...defaultFetchInit,
     headers: { "Content-Type": "application/json", ...options?.headers },
     ...options,
   });
@@ -430,6 +440,13 @@ function evidenceToQuery(params: EvidenceSearchParams): string {
 }
 
 export const api = {
+  getAuthStatus: () => request<AuthStatus>("/auth/status"),
+  login: (password: string) =>
+    request<AuthStatus>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
+  logout: () => request<AuthStatus>("/auth/logout", { method: "POST" }),
   list: <T>(resource: string) => request<T[]>(`/${resource}`),
   get: <T>(resource: string, id: string) => request<T>(`/${resource}/${id}`),
   create: <T>(resource: string, body: unknown) =>
@@ -480,6 +497,7 @@ export const api = {
     appendDocumentUploadMeta(form, meta);
     const res = await fetch(`${API_BASE}/sources/${encodeURIComponent(sourceId)}/documents`, {
       method: "POST",
+      credentials: "include",
       body: form,
     });
     const data = await res.json();
@@ -496,6 +514,7 @@ export const api = {
     appendDocumentUploadMeta(form, meta);
     const res = await fetch(`${API_BASE}/sources/${encodeURIComponent(sourceId)}/documents/batch`, {
       method: "POST",
+      credentials: "include",
       body: form,
     });
     const data = await res.json();
@@ -568,7 +587,9 @@ export const api = {
   documentContentUrl: (fileId: string, download = false) =>
     `${API_BASE}/documents/${encodeURIComponent(fileId)}/content${download ? "?download=1" : ""}`,
   fetchDocumentContent: async (fileId: string) => {
-    const res = await fetch(`${API_BASE}/documents/${encodeURIComponent(fileId)}/content`);
+    const res = await fetch(`${API_BASE}/documents/${encodeURIComponent(fileId)}/content`, {
+      credentials: "include",
+    });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error((data as { error?: string }).error ?? "Failed to load document");
@@ -580,6 +601,7 @@ export const api = {
     form.append("file", file);
     const res = await fetch(`${API_BASE}/documents/smart-upload/analyze`, {
       method: "POST",
+      credentials: "include",
       body: form,
     });
     const data = await res.json();
@@ -598,6 +620,7 @@ export const api = {
     if (meta.overwriteFileId) form.append("overwriteFileId", meta.overwriteFileId);
     const res = await fetch(`${API_BASE}/documents/smart-upload/confirm`, {
       method: "POST",
+      credentials: "include",
       body: form,
     });
     const data = await res.json();
@@ -651,7 +674,11 @@ export const api = {
   importSources: async (file: File) => {
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`${API_BASE}/import/sources`, { method: "POST", body: form });
+    const res = await fetch(`${API_BASE}/import/sources`, {
+      method: "POST",
+      credentials: "include",
+      body: form,
+    });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? "Import failed");
     return data as {

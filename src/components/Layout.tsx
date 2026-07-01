@@ -33,7 +33,7 @@ export function Layout() {
   const location = useLocation();
 
   const loadStats = useCallback(() => {
-    fetch("/api/stats")
+    fetch("/api/stats", { credentials: "include" })
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) {

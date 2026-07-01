@@ -15,6 +15,8 @@ import { evidenceRouter } from "./routes/evidence.js";
 import { observationsRouter } from "./routes/observations.js";
 import { shipFeaturesRouter } from "./routes/shipFeatures.js";
 import { documentsRouter, registerSourceDocumentRoutes } from "./routes/documents.js";
+import { authRouter } from "./routes/auth.js";
+import { authMiddleware, isAuthEnabled } from "./auth.js";
 import { seedTier1Claims } from "./seedTier1Claims.js";
 import { seedShipFeatures } from "./seedShipFeatures.js";
 
@@ -39,6 +41,9 @@ app.get("/api/health", async (_req, res) => {
     error: db.error,
   });
 });
+
+app.use("/api/auth", authRouter);
+app.use(authMiddleware);
 
 registerSourceDocumentRoutes(sourcesRouter);
 app.use("/api/sources", sourcesRouter);
@@ -320,6 +325,13 @@ async function start() {
   app.listen(PORT, "0.0.0.0", () => {
     const mode = process.env.NODE_ENV === "production" ? "production" : "development";
     console.log(`Georgette Research API running on http://0.0.0.0:${PORT} (${mode})`);
+    if (mode === "production" && !isAuthEnabled()) {
+      console.warn(
+        "[auth] ADMIN_PASSWORD is not set — the app is open without a password on all networks.",
+      );
+    } else if (isAuthEnabled()) {
+      console.log("[auth] Password required for access from outside the LAN");
+    }
   });
 }
 
