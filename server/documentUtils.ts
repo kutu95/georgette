@@ -55,7 +55,22 @@ export function parseOptionalInt(value: unknown): number | null | undefined {
   return Math.floor(n);
 }
 
-export type DocumentMetadataInput = {
+function parseOptionalString(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+export type PhotoMetadataInput = {
+  photographer?: string | null;
+  photoDate?: string | null;
+  photoLocation?: string | null;
+  copyrightHolder?: string | null;
+};
+
+export type DocumentMetadataInput = PhotoMetadataInput & {
   documentKind?: DocumentKind;
   pageNumber?: number | null;
   sortOrder?: number;
@@ -88,8 +103,23 @@ export function parseDocumentMetadata(body: Record<string, unknown>): DocumentMe
         ? body.notes.trim() || null
         : null
       : undefined;
+  const photographer = parseOptionalString(body.photographer);
+  const photoDate = parseOptionalString(body.photoDate);
+  const photoLocation = parseOptionalString(body.photoLocation);
+  const copyrightHolder = parseOptionalString(body.copyrightHolder);
 
-  return { documentKind, pageNumber, sortOrder, groupLabel, parentFileId, notes };
+  return {
+    documentKind,
+    pageNumber,
+    sortOrder,
+    groupLabel,
+    parentFileId,
+    notes,
+    photographer,
+    photoDate,
+    photoLocation,
+    copyrightHolder,
+  };
 }
 
 export function documentListOrderBy(): Array<

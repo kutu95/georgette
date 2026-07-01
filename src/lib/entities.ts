@@ -89,7 +89,7 @@ export const sourceConfig: EntityConfig = {
       ],
     },
     { key: "importance", label: "Importance" },
-    { key: "parentSourceId", label: "Parent Source ID" },
+    { key: "parentSourceId", label: "Parent Source" },
     { key: "sourceLevel", label: "Source Level", type: "number" },
     { key: "notes", label: "Notes", type: "textarea" },
   ],

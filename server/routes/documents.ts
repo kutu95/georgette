@@ -106,6 +106,10 @@ function buildFileCreateData(
     groupLabel: meta.groupLabel,
     parent: meta.parentFileId ? { connect: { fileId: meta.parentFileId } } : undefined,
     notes: meta.notes,
+    photographer: meta.photographer,
+    photoDate: meta.photoDate,
+    photoLocation: meta.photoLocation,
+    copyrightHolder: meta.copyrightHolder,
   };
 }
 
@@ -179,6 +183,12 @@ async function overwriteExistingFile(
       sortOrder: meta.sortOrder ?? existing.sortOrder,
       groupLabel: meta.groupLabel === undefined ? existing.groupLabel : meta.groupLabel,
       notes: meta.notes === undefined ? existing.notes : meta.notes,
+      photographer: meta.photographer === undefined ? existing.photographer : meta.photographer,
+      photoDate: meta.photoDate === undefined ? existing.photoDate : meta.photoDate,
+      photoLocation:
+        meta.photoLocation === undefined ? existing.photoLocation : meta.photoLocation,
+      copyrightHolder:
+        meta.copyrightHolder === undefined ? existing.copyrightHolder : meta.copyrightHolder,
     },
   });
 
@@ -332,6 +342,10 @@ documentsRouter.put("/:fileId", async (req, res) => {
         ? { connect: { fileId: meta.parentFileId } }
         : { disconnect: true };
     }
+    if (meta.photographer !== undefined) data.photographer = meta.photographer;
+    if (meta.photoDate !== undefined) data.photoDate = meta.photoDate;
+    if (meta.photoLocation !== undefined) data.photoLocation = meta.photoLocation;
+    if (meta.copyrightHolder !== undefined) data.copyrightHolder = meta.copyrightHolder;
 
     const file = await prisma.file.update({
       where: { fileId: req.params.fileId },

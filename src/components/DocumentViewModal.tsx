@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { getDocumentViewMode, type ViewableDocument } from "../lib/documentView";
+import { isPhotoDocument, photoMetadataFromRecord } from "../lib/photoMetadata";
 import { FormattedTextContent } from "./FormattedTextContent";
+import { PhotoMetadataSummary } from "./PhotoMetadataSummary";
 
 type Props = {
   document: ViewableDocument;
@@ -12,14 +14,17 @@ export function DocumentViewModal({ document, onClose }: Props) {
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [photoDetails, setPhotoDetails] = useState(document);
 
-  const title = document.fileName ?? document.fileId;
+  const title = photoDetails.fileName ?? photoDetails.fileId;
   const viewMode = getDocumentViewMode(
-    document.mimeType,
-    document.fileName,
-    document.documentKind,
+    photoDetails.mimeType,
+    photoDetails.fileName,
+    photoDetails.documentKind,
   );
-  const contentUrl = api.documentContentUrl(document.fileId);
+  const contentUrl = api.documentContentUrl(photoDetails.fileId);
+  const photoMetadata = photoMetadataFromRecord(photoDetails);
+  const showPhotoMetadata = isPhotoDocument(photoDetails.documentKind, photoDetails.mimeType);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -28,6 +33,24 @@ export function DocumentViewModal({ document, onClose }: Props) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
+
+  useEffect(() => {
+    setPhotoDetails(document);
+    if (!isPhotoDocument(document.documentKind, document.mimeType)) return;
+
+    let cancelled = false;
+    api
+      .getDocument(document.fileId)
+      .then((record) => {
+        if (!cancelled) setPhotoDetails(record);
+      })
+      .catch(() => {
+        /* keep props from list */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [document]);
 
   useEffect(() => {
     if (viewMode !== "text") {
@@ -41,7 +64,7 @@ export function DocumentViewModal({ document, onClose }: Props) {
     setLoading(true);
     setError(null);
     api
-      .fetchDocumentContent(document.fileId)
+      .fetchDocumentContent(photoDetails.fileId)
       .then((text) => {
         if (!cancelled) setContent(text);
       })
@@ -57,7 +80,7 @@ export function DocumentViewModal({ document, onClose }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [document.fileId, viewMode]);
+  }, [photoDetails.fileId, viewMode]);
 
   const modalWidth = viewMode === "pdf" || viewMode === "image" ? "max-w-5xl" : "max-w-3xl";
 
@@ -82,7 +105,7 @@ export function DocumentViewModal({ document, onClose }: Props) {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <a
-              href={api.documentContentUrl(document.fileId, true)}
+              href={api.documentContentUrl(photoDetails.fileId, true)}
               className="rounded border border-stone-300 px-2 py-1 text-xs text-stone-700 hover:bg-stone-50"
             >
               Download
@@ -98,6 +121,10 @@ export function DocumentViewModal({ document, onClose }: Props) {
         </div>
 
         <div className="overflow-y-auto px-5 py-4">
+          {showPhotoMetadata && (
+            <PhotoMetadataSummary metadata={photoMetadata} className="mb-4" />
+          )}
+
           {viewMode === "pdf" && (
             <iframe
               src={contentUrl}

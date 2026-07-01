@@ -204,6 +204,10 @@ model File {
   groupLabel   String?      @map("group_label")
   parentFileId String?      @map("parent_file_id")
   notes        String?
+  photographer String?
+  photoDate    String?      @map("photo_date")
+  photoLocation String?     @map("photo_location")
+  copyrightHolder String?  @map("copyright_holder")
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { api, type EvidenceLinkRecord, type ObservationRecord, type SourceDocumentRecord, type SourceRecord } from "../lib/api";
 import { CreateClaimFromSourceForm } from "../components/CreateClaimFromSourceForm";
 import { ObservationForm } from "../components/ObservationForm";
+import { ParentSourceSelect } from "../components/ParentSourceSelect";
 import { SourceDocumentsPanel } from "../components/SourceDocumentsPanel";
 import { RelationshipBadge } from "../components/RelationshipBadge";
 import { formatObservationConfidence } from "../lib/format";
@@ -71,6 +72,11 @@ export function SourceDetailPage() {
       for (const field of sourceConfig.fields) {
         if (field.readOnlyOnEdit) continue;
         let val = form[field.key];
+        if (field.key === "parentSourceId") {
+          payload.parentSourceId =
+            typeof val === "string" && val.trim() ? val.trim() : null;
+          continue;
+        }
         if (field.type === "number" && val !== "" && val != null) {
           val = Number(val);
         }
@@ -185,6 +191,20 @@ export function SourceDetailPage() {
           {sourceConfig.fields.map((field) => {
             if (field.readOnlyOnEdit) return null;
             const value = form[field.key] ?? "";
+            if (field.key === "parentSourceId") {
+              const parentId =
+                typeof value === "string" && value.trim() ? value.trim() : null;
+              return (
+                <ParentSourceSelect
+                  key={field.key}
+                  value={parentId}
+                  excludeSourceId={id}
+                  onChange={(next) =>
+                    setForm((prev) => ({ ...prev, parentSourceId: next ?? "" }))
+                  }
+                />
+              );
+            }
             if (field.type === "textarea") {
               return (
                 <label key={field.key} className="block">

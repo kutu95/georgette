@@ -1,10 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { DocumentViewModal } from "./DocumentViewModal";
 import { FormattedTextContent } from "./FormattedTextContent";
+import { PhotoMetadataFields } from "./PhotoMetadataFields";
+import { PhotoMetadataSummary } from "./PhotoMetadataSummary";
 import { api, type CombinedOcrResult, type SourceDocumentRecord } from "../lib/api";
 import { groupDocumentsByLabel, UPLOAD_DOCUMENT_KINDS } from "../lib/documentKinds";
 import { isPageScanKind, nextPageNumber } from "../lib/documentPages";
 import { formatDocumentKind, formatPageLabel } from "../lib/format";
+import {
+  isPhotoDocument,
+  photoMetadataFromRecord,
+  photoMetadataToPayload,
+  type PhotoMetadataInput,
+} from "../lib/photoMetadata";
 
 type Props = {
   sourceId: string;
@@ -45,6 +53,10 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
   const [textPage, setTextPage] = useState("");
   const [textGroup, setTextGroup] = useState("");
   const [textNotes, setTextNotes] = useState("");
+  const [uploadPhoto, setUploadPhoto] = useState<PhotoMetadataInput>({});
+  const [editingPhotoId, setEditingPhotoId] = useState<string | null>(null);
+  const [editingPhoto, setEditingPhoto] = useState<PhotoMetadataInput>({});
+  const [savingPhotoId, setSavingPhotoId] = useState<string | null>(null);
   const [combinedOcr, setCombinedOcr] = useState<CombinedOcrResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -74,6 +86,14 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
       .catch(() => setCombinedOcr(null));
   }, [sourceId, ocrPageCount, documents]);
 
+  function setUploadPhotoField(field: keyof PhotoMetadataInput, value: string) {
+    setUploadPhoto((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function setEditingPhotoField(field: keyof PhotoMetadataInput, value: string) {
+    setEditingPhoto((prev) => ({ ...prev, [field]: value }));
+  }
+
   function uploadMeta(kind: string, page: string, group: string) {
     const pageKinds = kind === "OCR" ? ["OCR"] : ["IMAGE", "ORIGINAL"];
     const pageNumber = page
@@ -85,7 +105,37 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
       documentKind: kind,
       pageNumber,
       groupLabel: group.trim() || undefined,
+      ...(isPageScanKind(kind) || kind === "IMAGE" ? photoMetadataToPayload(uploadPhoto) : {}),
     };
+  }
+
+  function startPhotoEdit(doc: SourceDocumentRecord) {
+    setEditingPhotoId(doc.fileId);
+    setEditingPhoto({
+      photographer: doc.photographer ?? "",
+      photoDate: doc.photoDate ?? "",
+      photoLocation: doc.photoLocation ?? "",
+      copyrightHolder: doc.copyrightHolder ?? "",
+    });
+  }
+
+  async function savePhotoEdit(fileId: string) {
+    setSavingPhotoId(fileId);
+    setError(null);
+    try {
+      await api.updateDocument(fileId, {
+        photographer: editingPhoto.photographer?.trim() || null,
+        photoDate: editingPhoto.photoDate?.trim() || null,
+        photoLocation: editingPhoto.photoLocation?.trim() || null,
+        copyrightHolder: editingPhoto.copyrightHolder?.trim() || null,
+      });
+      setEditingPhotoId(null);
+      onChange();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save photo details");
+    } finally {
+      setSavingPhotoId(null);
+    }
   }
 
   async function handleImagePageUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -136,6 +186,7 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
         documentKind: batchKind,
         pageNumber: Number(batchStartPage) || 1,
         groupLabel: batchGroup.trim() || undefined,
+        ...(batchKind === "IMAGE" ? photoMetadataToPayload(uploadPhoto) : {}),
       });
       onChange();
     } catch (err) {
@@ -307,6 +358,16 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
         </label>
       </div>
 
+      {(isPageScanKind(uploadKind) || batchKind === "IMAGE") && (
+        <div className="mb-4 rounded-lg border border-stone-200 bg-white p-4">
+          <PhotoMetadataFields
+            values={uploadPhoto}
+            onChange={setUploadPhotoField}
+            idPrefix="upload-photo"
+          />
+        </div>
+      )}
+
       <div className="mb-4 grid gap-3 rounded-lg border border-dashed border-stone-300 bg-white p-4 sm:grid-cols-4">
         <p className="sm:col-span-4 text-xs font-medium text-stone-600">
           Optional batch upload — select multiple files at once; each becomes the next page number.
@@ -463,43 +524,85 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
                 )}
                 <ul className="divide-y divide-stone-100 rounded-lg border border-stone-200 bg-white shadow-sm">
                   {groupDocs.map((doc) => (
-                    <li
-                      key={doc.fileId}
-                      className="flex flex-wrap items-start justify-between gap-3 px-5 py-4"
-                    >
-                      <div className="min-w-0">
-                        <p className="font-medium text-stone-900">{doc.fileName ?? doc.fileId}</p>
-                        <p className="mt-1 text-xs text-stone-500">
-                          {formatDocumentKind(doc.documentKind, doc.mimeType)}
-                          {doc.pageNumber != null
-                            ? ` · ${formatPageLabel(doc.pageNumber)}`
-                            : ""}
-                          {doc.notes ? ` · ${doc.notes}` : ""}
-                        </p>
+                    <li key={doc.fileId} className="px-5 py-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-medium text-stone-900">{doc.fileName ?? doc.fileId}</p>
+                          <p className="mt-1 text-xs text-stone-500">
+                            {formatDocumentKind(doc.documentKind, doc.mimeType)}
+                            {doc.pageNumber != null
+                              ? ` · ${formatPageLabel(doc.pageNumber)}`
+                              : ""}
+                            {doc.notes ? ` · ${doc.notes}` : ""}
+                          </p>
+                          {isPhotoDocument(doc.documentKind, doc.mimeType) && (
+                            <PhotoMetadataSummary
+                              metadata={photoMetadataFromRecord(doc)}
+                              className="mt-2"
+                            />
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setViewingDocument(doc)}
+                            className="rounded border border-stone-300 px-2 py-1 text-xs text-stone-700 hover:bg-stone-50"
+                          >
+                            View
+                          </button>
+                          {isPhotoDocument(doc.documentKind, doc.mimeType) && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                editingPhotoId === doc.fileId
+                                  ? setEditingPhotoId(null)
+                                  : startPhotoEdit(doc)
+                              }
+                              className="rounded border border-stone-300 px-2 py-1 text-xs text-stone-700 hover:bg-stone-50"
+                            >
+                              {editingPhotoId === doc.fileId ? "Cancel edit" : "Photo details"}
+                            </button>
+                          )}
+                          <a
+                            href={api.documentContentUrl(doc.fileId, true)}
+                            className="rounded border border-stone-300 px-2 py-1 text-xs text-stone-700 hover:bg-stone-50"
+                          >
+                            Download
+                          </a>
+                          <button
+                            type="button"
+                            disabled={removingId === doc.fileId}
+                            onClick={() => handleRemove(doc)}
+                            className="rounded border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
+                          >
+                            {removingId === doc.fileId ? "…" : "Remove"}
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setViewingDocument(doc)}
-                          className="rounded border border-stone-300 px-2 py-1 text-xs text-stone-700 hover:bg-stone-50"
+
+                      {editingPhotoId === doc.fileId && (
+                        <form
+                          className="mt-4 space-y-3 rounded-md border border-stone-200 bg-stone-50 p-4"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void savePhotoEdit(doc.fileId);
+                          }}
                         >
-                          View
-                        </button>
-                        <a
-                          href={api.documentContentUrl(doc.fileId, true)}
-                          className="rounded border border-stone-300 px-2 py-1 text-xs text-stone-700 hover:bg-stone-50"
-                        >
-                          Download
-                        </a>
-                        <button
-                          type="button"
-                          disabled={removingId === doc.fileId}
-                          onClick={() => handleRemove(doc)}
-                          className="rounded border border-red-200 px-2 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
-                        >
-                          {removingId === doc.fileId ? "…" : "Remove"}
-                        </button>
-                      </div>
+                          <PhotoMetadataFields
+                            values={editingPhoto}
+                            onChange={setEditingPhotoField}
+                            idPrefix={`edit-${doc.fileId}`}
+                            compact
+                          />
+                          <button
+                            type="submit"
+                            disabled={savingPhotoId === doc.fileId}
+                            className="rounded-md bg-stone-800 px-3 py-1.5 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50"
+                          >
+                            {savingPhotoId === doc.fileId ? "Saving…" : "Save photo details"}
+                          </button>
+                        </form>
+                      )}
                     </li>
                   ))}
                 </ul>

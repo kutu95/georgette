@@ -7,6 +7,10 @@ export type ViewableDocument = {
   fileName: string | null;
   mimeType: string | null;
   documentKind: string;
+  photographer?: string | null;
+  photoDate?: string | null;
+  photoLocation?: string | null;
+  copyrightHolder?: string | null;
 };
 
 export function getDocumentViewMode(

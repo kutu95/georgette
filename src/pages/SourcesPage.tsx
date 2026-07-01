@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { DocumentViewModal } from "../components/DocumentViewModal";
 import { PasteTextSourceForm } from "../components/PasteTextSourceForm";
+import { ParentSourceSelect } from "../components/ParentSourceSelect";
 import { ResizableTh } from "../components/ResizableTh";
 import { SourceDocumentPickerModal } from "../components/SourceDocumentPickerModal";
 import { SourceIdField } from "../components/SourceIdField";
@@ -380,6 +381,23 @@ export function SourcesPage() {
                     value={String(value)}
                     onChange={(next) => setForm((prev) => ({ ...prev, sourceId: next }))}
                     required={field.required}
+                  />
+                );
+              }
+              if (field.key === "parentSourceId") {
+                const parentId =
+                  typeof value === "string" && value.trim() ? value.trim() : null;
+                return (
+                  <ParentSourceSelect
+                    key={field.key}
+                    className="sm:col-span-2"
+                    value={parentId}
+                    excludeSourceId={
+                      typeof form.sourceId === "string" ? form.sourceId.trim() || null : null
+                    }
+                    onChange={(id) =>
+                      setForm((prev) => ({ ...prev, parentSourceId: id ?? "" }))
+                    }
                   />
                 );
               }

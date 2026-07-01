@@ -4,8 +4,21 @@ import {
   type PasteTextSourceResult,
 } from "./pasteTextSource";
 import { normalizeSourceIdInput } from "./sourceId";
+import type { PhotoMetadataInput } from "./photoMetadata";
 
 const API_BASE = "/api";
+
+function appendDocumentUploadMeta(form: FormData, meta: SourceDocumentUploadMeta): void {
+  if (meta.documentKind) form.append("documentKind", meta.documentKind);
+  if (meta.pageNumber != null) form.append("pageNumber", String(meta.pageNumber));
+  if (meta.sortOrder != null) form.append("sortOrder", String(meta.sortOrder));
+  if (meta.groupLabel) form.append("groupLabel", meta.groupLabel);
+  if (meta.notes) form.append("notes", meta.notes);
+  if (meta.photographer) form.append("photographer", meta.photographer);
+  if (meta.photoDate) form.append("photoDate", meta.photoDate);
+  if (meta.photoLocation) form.append("photoLocation", meta.photoLocation);
+  if (meta.copyrightHolder) form.append("copyrightHolder", meta.copyrightHolder);
+}
 
 export { textDocumentFileName };
 export type { PasteTextSourceInput, PasteTextSourceResult };
@@ -37,6 +50,10 @@ export type SourceDocumentRecord = {
   groupLabel: string | null;
   parentFileId: string | null;
   notes: string | null;
+  photographer: string | null;
+  photoDate: string | null;
+  photoLocation: string | null;
+  copyrightHolder: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -54,6 +71,20 @@ export type SourceDocumentUploadMeta = {
   sortOrder?: number;
   groupLabel?: string;
   notes?: string;
+} & PhotoMetadataInput;
+
+export type DocumentUpdateInput = {
+  fileName?: string;
+  documentKind?: string;
+  pageNumber?: number | null;
+  sortOrder?: number;
+  groupLabel?: string | null;
+  notes?: string | null;
+  parentFileId?: string | null;
+  photographer?: string | null;
+  photoDate?: string | null;
+  photoLocation?: string | null;
+  copyrightHolder?: string | null;
 };
 
 export type MatchMethod = "filename" | "content" | "source_id";
@@ -446,11 +477,7 @@ export const api = {
   ) => {
     const form = new FormData();
     form.append("file", file);
-    if (meta.documentKind) form.append("documentKind", meta.documentKind);
-    if (meta.pageNumber != null) form.append("pageNumber", String(meta.pageNumber));
-    if (meta.sortOrder != null) form.append("sortOrder", String(meta.sortOrder));
-    if (meta.groupLabel) form.append("groupLabel", meta.groupLabel);
-    if (meta.notes) form.append("notes", meta.notes);
+    appendDocumentUploadMeta(form, meta);
     const res = await fetch(`${API_BASE}/sources/${encodeURIComponent(sourceId)}/documents`, {
       method: "POST",
       body: form,
@@ -466,10 +493,7 @@ export const api = {
   ) => {
     const form = new FormData();
     for (const file of files) form.append("files", file);
-    if (meta.documentKind) form.append("documentKind", meta.documentKind);
-    if (meta.pageNumber != null) form.append("pageNumber", String(meta.pageNumber));
-    if (meta.groupLabel) form.append("groupLabel", meta.groupLabel);
-    if (meta.notes) form.append("notes", meta.notes);
+    appendDocumentUploadMeta(form, meta);
     const res = await fetch(`${API_BASE}/sources/${encodeURIComponent(sourceId)}/documents/batch`, {
       method: "POST",
       body: form,
@@ -532,6 +556,13 @@ export const api = {
 
     return { sourceId, sourceCreated, document };
   },
+  getDocument: (fileId: string) =>
+    request<SourceDocumentRecord>(`/documents/${encodeURIComponent(fileId)}`),
+  updateDocument: (fileId: string, body: DocumentUpdateInput) =>
+    request<SourceDocumentRecord>(`/documents/${encodeURIComponent(fileId)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   removeDocument: (fileId: string) =>
     request<void>(`/documents/${encodeURIComponent(fileId)}`, { method: "DELETE" }),
   documentContentUrl: (fileId: string, download = false) =>
