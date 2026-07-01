@@ -3,6 +3,7 @@ import {
   type PasteTextSourceInput,
   type PasteTextSourceResult,
 } from "./pasteTextSource";
+import { normalizeSourceIdInput } from "./sourceId";
 
 const API_BASE = "/api";
 
@@ -416,6 +417,7 @@ export const api = {
   getSourceReferencedBy: (id: string) =>
     request<EvidenceLinkRecord[]>(`/sources/${encodeURIComponent(id)}/referenced-by`),
   getSourceFilterOptions: () => request<SourceFilterOptions>("/sources/meta/filters"),
+  getNextSourceId: () => request<{ nextSourceId: string }>("/sources/meta/next-id"),
   searchClaimsList: (params: ClaimSearchParams = {}) =>
     request<ClaimSearchResult>(`/claims${toQuery(params)}`),
   searchClaims: (q: string, limit = 20) =>
@@ -494,7 +496,8 @@ export const api = {
   createSourceFromPastedText: async (
     input: PasteTextSourceInput,
   ): Promise<PasteTextSourceResult> => {
-    const sourceId = input.sourceId.trim();
+    const sourceId = normalizeSourceIdInput(input.sourceId);
+    if (!sourceId) throw new Error("sourceId is required");
     const fileName = textDocumentFileName(input.title);
     let sourceCreated = false;
 

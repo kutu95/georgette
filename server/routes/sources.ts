@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { pickPrimaryDocument } from "../documentView.js";
+import { nextSourceIdFromExisting, normalizeSourceIdInput } from "../sourceId.js";
 
 const SORT_FIELDS = {
   source_id: "sourceId",
@@ -87,6 +88,16 @@ sourcesRouter.get("/meta/filters", async (_req, res) => {
     res.json({ categories, importances, originalOrDerived });
   } catch (err) {
     sendError(res, 500, err instanceof Error ? err.message : "Failed to load filter options");
+  }
+});
+
+sourcesRouter.get("/meta/next-id", async (_req, res) => {
+  try {
+    const rows = await prisma.source.findMany({ select: { sourceId: true } });
+    const nextSourceId = nextSourceIdFromExisting(rows.map((row) => row.sourceId));
+    res.json({ nextSourceId });
+  } catch (err) {
+    sendError(res, 500, err instanceof Error ? err.message : "Failed to suggest next source ID");
   }
 });
 
@@ -220,10 +231,12 @@ sourcesRouter.get("/:id", async (req, res) => {
 
 sourcesRouter.post("/", async (req, res) => {
   try {
-    const { sourceId, ...rest } = req.body;
-    if (!sourceId || typeof sourceId !== "string") {
+    const rawId = req.body?.sourceId;
+    if (!rawId || typeof rawId !== "string" || !rawId.trim()) {
       return sendError(res, 400, "sourceId is required");
     }
+    const sourceId = normalizeSourceIdInput(rawId);
+    const { sourceId: _ignored, ...rest } = req.body;
     const item = await prisma.source.create({ data: { sourceId, ...rest } });
     res.status(201).json(item);
   } catch (err) {

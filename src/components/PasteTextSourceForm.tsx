@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { SourceIdField } from "./SourceIdField";
 import { api } from "../lib/api";
 import { textDocumentFileName } from "../lib/pasteTextSource";
+import { normalizeSourceIdInput } from "../lib/sourceId";
 
 type Props = {
   onSaved: () => void;
@@ -23,7 +25,7 @@ export function PasteTextSourceForm({ onSaved, onCancel }: Props) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const id = sourceId.trim();
+    const id = normalizeSourceIdInput(sourceId);
     const body = text.trim();
     if (!id) {
       setError("Source ID is required.");
@@ -104,19 +106,11 @@ export function PasteTextSourceForm({ onSaved, onCancel }: Props) {
 
       <form onSubmit={(e) => void handleSubmit(e)} className="mt-4 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium text-stone-700">
-              Source ID <span className="text-red-600">*</span>
-            </span>
-            <input
-              type="text"
-              value={sourceId}
-              onChange={(e) => setSourceId(e.target.value)}
-              required
-              placeholder="e.g. SRC-0042"
-              className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm font-mono"
-            />
-          </label>
+          <SourceIdField
+            value={sourceId}
+            onChange={setSourceId}
+            required
+          />
           <label className="block">
             <span className="mb-1 block text-sm font-medium text-stone-700">
               Document title <span className="text-red-600">*</span>

@@ -4,12 +4,14 @@ import { DocumentViewModal } from "../components/DocumentViewModal";
 import { PasteTextSourceForm } from "../components/PasteTextSourceForm";
 import { ResizableTh } from "../components/ResizableTh";
 import { SourceDocumentPickerModal } from "../components/SourceDocumentPickerModal";
+import { SourceIdField } from "../components/SourceIdField";
 import { ViewIconButton } from "../components/ViewIconButton";
 import { useResizableColumns } from "../hooks/useResizableColumns";
 import { api, type SourceDocumentRecord, type SourceFilterOptions, type SourceRecord } from "../lib/api";
 import type { ViewableDocument } from "../lib/documentView";
 import { formatSourceLabel } from "../lib/format";
 import { sourceConfig } from "../lib/entities";
+import { normalizeSourceIdInput } from "../lib/sourceId";
 
 const SORT_OPTIONS = [
   { value: "source_id", label: "Source ID" },
@@ -131,6 +133,9 @@ export function SourcesPage() {
       const payload: Record<string, unknown> = {};
       for (const field of sourceConfig.fields) {
         let val = form[field.key];
+        if (field.key === "sourceId" && typeof val === "string") {
+          val = normalizeSourceIdInput(val);
+        }
         if (field.type === "number" && val !== "" && val != null) {
           val = Number(val);
         }
@@ -367,6 +372,17 @@ export function SourcesPage() {
           <form onSubmit={handleSave} className="grid gap-4 sm:grid-cols-2">
             {sourceConfig.fields.map((field) => {
               const value = form[field.key] ?? "";
+              if (field.key === "sourceId") {
+                return (
+                  <SourceIdField
+                    key={field.key}
+                    className="sm:col-span-2"
+                    value={String(value)}
+                    onChange={(next) => setForm((prev) => ({ ...prev, sourceId: next }))}
+                    required={field.required}
+                  />
+                );
+              }
               if (field.type === "textarea") {
                 return (
                   <label key={field.key} className="block sm:col-span-2">
