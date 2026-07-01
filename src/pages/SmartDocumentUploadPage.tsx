@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { SearchableSelect } from "../components/SearchableSelect";
+import { SourceIdField } from "../components/SourceIdField";
 import {
   api,
   SmartDocumentUploadError,
@@ -14,13 +15,16 @@ import { formatDocumentKind, formatSourceLabel } from "../lib/format";
 
 type AnalyzeStatus = "pending" | "analyzing" | "done" | "error";
 type UploadStatus = "idle" | "uploading" | "uploaded" | "skipped" | "error";
+type SourceMode = "existing" | "new";
 
 type UploadQueueItem = {
   id: string;
   file: File;
   analysis: DocumentMatchResult | null;
+  sourceMode: SourceMode;
   selectedSourceId: string | null;
   selectedSourceLabel: string | null;
+  newSourceTitle: string;
   overwriteFileId: string | null;
   duplicateResolved: boolean;
   documentKind: string;
@@ -65,7 +69,7 @@ function statusMessage(result: DocumentMatchResult): { tone: "ok" | "warn" | "ne
   }
   return {
     tone: "warn",
-    text: "No confident match was found. Search for and select the source this document belongs to.",
+    text: "No matching source was found. Create a new source for this file, or search for an existing source if it belongs with documents you already catalogued.",
   };
 }
 
@@ -105,13 +109,19 @@ function applyExistingToItem(item: UploadQueueItem, existing: ExistingDocumentMa
   };
 }
 
-function itemFromAnalysis(file: File, result: DocumentMatchResult): UploadQueueItem {
+function itemFromAnalysis(
+  file: File,
+  result: DocumentMatchResult,
+  options?: { nextSourceId?: string },
+): UploadQueueItem {
   let item: UploadQueueItem = {
     id: queueItemId(file),
     file,
     analysis: result,
+    sourceMode: "existing",
     selectedSourceId: null,
     selectedSourceLabel: null,
+    newSourceTitle: titleFromFilename(file.name),
     overwriteFileId: null,
     duplicateResolved: result.existingDocuments.length === 0,
     documentKind: result.inferredKind !== "OTHER" ? result.inferredKind : "ORIGINAL",
@@ -130,6 +140,15 @@ function itemFromAnalysis(file: File, result: DocumentMatchResult): UploadQueueI
   } else {
     item = applyRecommendationToItem(item, result);
   }
+
+  const unmatched = result.status === "unmatched" && !result.recommended;
+  if (unmatched && options?.nextSourceId) {
+    item.sourceMode = "new";
+    item.selectedSourceId = options.nextSourceId;
+    item.selectedSourceLabel = `${options.nextSourceId} (new source)`;
+    item.documentKind = isImageUploadFile(file) ? "IMAGE" : item.documentKind;
+  }
+
   return item;
 }
 
@@ -190,7 +209,10 @@ function queueItemSummary(item: UploadQueueItem): { label: string; tone: string 
     return { label: "Duplicate — action needed", tone: "text-red-700" };
   }
   if (!item.selectedSourceId) {
-    return { label: "Select source", tone: "text-amber-700" };
+    return { label: "Choose or create source", tone: "text-amber-700" };
+  }
+  if (item.sourceMode === "new") {
+    return { label: "New source ready", tone: "text-green-700" };
   }
   if (item.overwriteFileId) {
     return { label: "Ready to overwrite", tone: "text-amber-800" };
@@ -206,6 +228,16 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isImageUploadFile(file: File): boolean {
+  if (file.type.startsWith("image/")) return true;
+  return /\.(jpe?g|png|gif|webp|tiff?)$/i.test(file.name);
+}
+
+function titleFromFilename(fileName: string): string {
+  const base = fileName.replace(/\.[^.]+$/, "").trim();
+  return base.replace(/[_-]+/g, " ").trim() || fileName;
 }
 
 export function SmartDocumentUploadPage() {
@@ -244,6 +276,19 @@ export function SmartDocumentUploadPage() {
 
       updateItem(item.id, { uploadStatus: "uploading", uploadError: null });
       try {
+        if (item.sourceMode === "new" && item.selectedSourceId) {
+          try {
+            await api.getSource(item.selectedSourceId);
+          } catch {
+            const title = item.newSourceTitle.trim() || titleFromFilename(item.file.name);
+            await api.create("sources", {
+              sourceId: item.selectedSourceId,
+              currentFileName: title,
+              suggestedStandardFileName: title,
+            });
+          }
+        }
+
         await api.confirmSmartDocumentUpload(item.file, {
           sourceId: item.selectedSourceId!,
           documentKind: item.documentKind,
@@ -314,8 +359,10 @@ export function SmartDocumentUploadPage() {
           id,
           file,
           analysis: null,
+          sourceMode: "existing",
           selectedSourceId: null,
           selectedSourceLabel: null,
+          newSourceTitle: titleFromFilename(file.name),
           overwriteFileId: null,
           duplicateResolved: false,
           documentKind: "ORIGINAL",
@@ -338,7 +385,11 @@ export function SmartDocumentUploadPage() {
 
       try {
         const result = await api.analyzeSmartDocumentUpload(file);
-        const item = itemFromAnalysis(file, result);
+        let nextSourceId: string | undefined;
+        if (result.status === "unmatched" && !result.recommended) {
+          ({ nextSourceId } = await api.getNextSourceId());
+        }
+        const item = itemFromAnalysis(file, result, { nextSourceId });
         setQueue((current) => current.map((i) => (i.id === id ? item : i)));
 
         if (isAutoUploadEligible(item)) {
@@ -435,6 +486,7 @@ export function SmartDocumentUploadPage() {
   function selectCandidate(candidate: DocumentMatchCandidate) {
     if (!activeItem || activeItem.overwriteFileId) return;
     updateItem(activeItem.id, {
+      sourceMode: "existing",
       selectedSourceId: candidate.sourceId,
       selectedSourceLabel: candidate.sourceLabel,
       documentKind: candidate.documentKind ?? activeItem.documentKind,
@@ -781,36 +833,141 @@ export function SmartDocumentUploadPage() {
 
             <form onSubmit={(e) => void handleUploadActive(e)} className="rounded-lg border border-stone-200 bg-white p-6 shadow-sm">
               <h3 className="font-medium text-stone-800">
-                {isOverwrite ? "2. Confirm overwrite" : "2. Confirm source and upload"}
+                {isOverwrite ? "2. Confirm overwrite" : "2. Where should this file be stored?"}
               </h3>
 
               <div className="mt-4 space-y-4">
-                <SearchableSelect
-                  label="Source"
-                  required
-                  value={activeItem.selectedSourceId}
-                  displayLabel={activeItem.selectedSourceLabel}
-                  placeholder="Search sources by ID or filename…"
-                  disabled={isOverwrite}
-                  onSearch={async (q) => {
-                    const { items } = await api.searchSourcesAutocomplete(q, 25);
-                    return items.map((source) => ({
-                      id: source.sourceId,
-                      label: formatSourceLabel(source),
-                    }));
-                  }}
-                  onResolve={async (id) => {
-                    const source = await api.getSource(id);
-                    return { id: source.sourceId, label: formatSourceLabel(source) };
-                  }}
-                  onChange={(id, option) => {
-                    if (isOverwrite) return;
-                    updateItem(activeItem.id, {
-                      selectedSourceId: id,
-                      selectedSourceLabel: option?.label ?? null,
-                    });
-                  }}
-                />
+                {!isOverwrite && (
+                  <>
+                    <div className="rounded-md border border-stone-200 bg-stone-50 px-4 py-3 text-sm text-stone-700">
+                      <p>
+                        A source is the archive record this file belongs to — one newspaper, one
+                        photo set, one logbook, and so on.
+                      </p>
+                      <p className="mt-2">
+                        For a new photo or scan, choose Create new source (recommended for field
+                        photos). To add another page to something already catalogued, choose Use
+                        existing source and search for it.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void api.getNextSourceId().then(({ nextSourceId }) => {
+                            updateItem(activeItem.id, {
+                              sourceMode: "new",
+                              selectedSourceId: nextSourceId,
+                              selectedSourceLabel: `${nextSourceId} (new source)`,
+                              newSourceTitle:
+                                activeItem.newSourceTitle || titleFromFilename(activeItem.file.name),
+                              documentKind: isImageUploadFile(activeItem.file)
+                                ? "IMAGE"
+                                : activeItem.documentKind,
+                            });
+                          });
+                        }}
+                        className={[
+                          "rounded-md px-4 py-2 text-sm font-medium",
+                          activeItem.sourceMode === "new"
+                            ? "bg-stone-800 text-white"
+                            : "border border-stone-300 text-stone-700 hover:bg-stone-50",
+                        ].join(" ")}
+                      >
+                        Create new source
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateItem(activeItem.id, {
+                            sourceMode: "existing",
+                            selectedSourceId: null,
+                            selectedSourceLabel: null,
+                          })
+                        }
+                        className={[
+                          "rounded-md px-4 py-2 text-sm font-medium",
+                          activeItem.sourceMode === "existing"
+                            ? "bg-stone-800 text-white"
+                            : "border border-stone-300 text-stone-700 hover:bg-stone-50",
+                        ].join(" ")}
+                      >
+                        Use existing source
+                      </button>
+                    </div>
+
+                    {activeItem.sourceMode === "new" ? (
+                      <div className="space-y-4 rounded-md border border-stone-200 p-4">
+                        <SourceIdField
+                          value={activeItem.selectedSourceId ?? ""}
+                          onChange={(sourceId) =>
+                            updateItem(activeItem.id, {
+                              selectedSourceId: sourceId,
+                              selectedSourceLabel: sourceId ? `${sourceId} (new source)` : null,
+                            })
+                          }
+                          required
+                        />
+                        <label className="block text-sm">
+                          <span className="mb-1 block font-medium text-stone-700">
+                            Source title / description
+                          </span>
+                          <input
+                            type="text"
+                            value={activeItem.newSourceTitle}
+                            onChange={(e) =>
+                              updateItem(activeItem.id, { newSourceTitle: e.target.value })
+                            }
+                            placeholder="e.g. Prop on beach — broken blade"
+                            className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
+                          />
+                          <span className="mt-1 block text-xs text-stone-500">
+                            Shown in the sources list. Defaults from the filename.
+                          </span>
+                        </label>
+                      </div>
+                    ) : (
+                      <SearchableSelect
+                        label="Existing source"
+                        required
+                        value={activeItem.selectedSourceId}
+                        displayLabel={activeItem.selectedSourceLabel}
+                        placeholder="Search by source ID or filename…"
+                        onSearch={async (q) => {
+                          const { items } = await api.searchSourcesAutocomplete(q, 25);
+                          return items.map((source) => ({
+                            id: source.sourceId,
+                            label: formatSourceLabel(source),
+                          }));
+                        }}
+                        onResolve={async (id) => {
+                          const source = await api.getSource(id);
+                          return { id: source.sourceId, label: formatSourceLabel(source) };
+                        }}
+                        onChange={(id, option) => {
+                          updateItem(activeItem.id, {
+                            selectedSourceId: id,
+                            selectedSourceLabel: option?.label ?? null,
+                          });
+                        }}
+                      />
+                    )}
+                  </>
+                )}
+
+                {isOverwrite && (
+                  <SearchableSelect
+                    label="Source"
+                    required
+                    value={activeItem.selectedSourceId}
+                    displayLabel={activeItem.selectedSourceLabel}
+                    placeholder="Search sources by ID or filename…"
+                    disabled
+                    onSearch={async () => []}
+                    onChange={() => undefined}
+                  />
+                )}
 
                 <div className="grid gap-4 sm:grid-cols-3">
                   <label className="block text-sm">
