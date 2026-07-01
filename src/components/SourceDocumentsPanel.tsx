@@ -3,6 +3,7 @@ import { DocumentViewModal } from "./DocumentViewModal";
 import { FormattedTextContent } from "./FormattedTextContent";
 import { api, type CombinedOcrResult, type SourceDocumentRecord } from "../lib/api";
 import { groupDocumentsByLabel, UPLOAD_DOCUMENT_KINDS } from "../lib/documentKinds";
+import { isPageScanKind, nextPageNumber } from "../lib/documentPages";
 import { formatDocumentKind, formatPageLabel } from "../lib/format";
 
 type Props = {
@@ -28,10 +29,11 @@ function sortForDisplay(docs: SourceDocumentRecord[]): SourceDocumentRecord[] {
 
 export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imagePageInputRef = useRef<HTMLInputElement>(null);
   const batchInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [showTextForm, setShowTextForm] = useState(false);
-  const [uploadKind, setUploadKind] = useState("ORIGINAL");
+  const [uploadKind, setUploadKind] = useState("IMAGE");
   const [uploadPage, setUploadPage] = useState("");
   const [uploadGroup, setUploadGroup] = useState("");
   const [batchStartPage, setBatchStartPage] = useState("1");
@@ -52,6 +54,14 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
   const combinedDoc = documents.find((d) => d.documentKind === "COMBINED_OCR");
   const displayDocs = sortForDisplay(documents.filter((d) => d.documentKind !== "COMBINED_OCR"));
   const groups = groupDocumentsByLabel(displayDocs);
+  const suggestedImagePage = nextPageNumber(documents, {
+    kinds: ["IMAGE", "ORIGINAL"],
+    groupLabel: uploadGroup,
+  });
+  const suggestedOcrPage = nextPageNumber(documents, {
+    kinds: ["OCR"],
+    groupLabel: textGroup,
+  });
 
   useEffect(() => {
     if (ocrPageCount === 0) {
@@ -65,11 +75,35 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
   }, [sourceId, ocrPageCount, documents]);
 
   function uploadMeta(kind: string, page: string, group: string) {
+    const pageKinds = kind === "OCR" ? ["OCR"] : ["IMAGE", "ORIGINAL"];
+    const pageNumber = page
+      ? Number(page)
+      : isPageScanKind(kind) || kind === "OCR"
+        ? nextPageNumber(documents, { kinds: pageKinds, groupLabel: group })
+        : undefined;
     return {
       documentKind: kind,
-      pageNumber: page ? Number(page) : undefined,
+      pageNumber,
       groupLabel: group.trim() || undefined,
     };
+  }
+
+  async function handleImagePageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const meta = uploadMeta("IMAGE", uploadPage, uploadGroup);
+      await api.uploadSourceDocument(sourceId, file, meta);
+      setUploadPage(String((meta.pageNumber ?? suggestedImagePage) + 1));
+      onChange();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+      if (imagePageInputRef.current) imagePageInputRef.current.value = "";
+    }
   }
 
   async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -78,7 +112,11 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
     setUploading(true);
     setError(null);
     try {
-      await api.uploadSourceDocument(sourceId, file, uploadMeta(uploadKind, uploadPage, uploadGroup));
+      const meta = uploadMeta(uploadKind, uploadPage, uploadGroup);
+      await api.uploadSourceDocument(sourceId, file, meta);
+      if (isPageScanKind(uploadKind) && meta.pageNumber != null) {
+        setUploadPage(String(meta.pageNumber + 1));
+      }
       onChange();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
@@ -117,14 +155,18 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
     setUploading(true);
     setError(null);
     try {
+      const pageNumber = textPage ? Number(textPage) : suggestedOcrPage;
       await api.createSourceTextDocument(sourceId, {
         text: textContent.trim(),
         fileName: textTitle.trim() || undefined,
         notes: textNotes.trim() || undefined,
         documentKind: textKind,
-        pageNumber: textPage ? Number(textPage) : undefined,
+        pageNumber: textKind === "OCR" ? pageNumber : textPage ? Number(textPage) : undefined,
         groupLabel: textGroup.trim() || undefined,
       });
+      if (textKind === "OCR") {
+        setTextPage(String(pageNumber + 1));
+      }
       setTextContent("");
       setTextTitle("");
       setTextNotes("");
@@ -157,11 +199,19 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
         <div>
           <h3 className="text-lg font-semibold text-stone-900">Source Documents</h3>
           <p className="mt-1 max-w-2xl text-sm text-stone-600">
-            Attach originals, page scans, OCR text, summaries, and other files. Upload OCR one
-            page at a time (or in batch) — pages are combined automatically in page order.
+            Add page scans one at a time with Add Image Page, or upload several at once. Match
+            OCR and summaries to the same page numbers and group label when they belong to one
+            document.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <input
+            ref={imagePageInputRef}
+            type="file"
+            accept=".jpg,.jpeg,.png,.gif,.webp,.tif,.tiff,image/*"
+            className="hidden"
+            onChange={handleImagePageUpload}
+          />
           <input
             ref={fileInputRef}
             type="file"
@@ -180,8 +230,16 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
           <button
             type="button"
             disabled={uploading}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => imagePageInputRef.current?.click()}
             className="rounded-md bg-stone-800 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50"
+          >
+            Add Image Page
+          </button>
+          <button
+            type="button"
+            disabled={uploading}
+            onClick={() => fileInputRef.current?.click()}
+            className="rounded-md border border-stone-300 px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-50"
           >
             Upload File
           </button>
@@ -191,7 +249,7 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
             onClick={() => batchInputRef.current?.click()}
             className="rounded-md border border-stone-300 px-4 py-2 text-sm text-stone-700 hover:bg-stone-50 disabled:opacity-50"
           >
-            Upload Pages…
+            Upload Multiple Pages…
           </button>
           <button
             type="button"
@@ -204,6 +262,14 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
       </div>
 
       <div className="mb-4 grid gap-3 rounded-lg border border-stone-200 bg-stone-50 p-4 sm:grid-cols-3">
+        <p className="sm:col-span-3 text-xs text-stone-600">
+          Page scans and single uploads share these settings. Leave page blank to use the next
+          available number
+          {uploadKind === "IMAGE" || uploadKind === "ORIGINAL"
+            ? ` (${suggestedImagePage} in this group)`
+            : ""}
+          .
+        </p>
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-stone-600">Single upload type</span>
           <select
@@ -225,7 +291,7 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
             min={1}
             value={uploadPage}
             onChange={(e) => setUploadPage(e.target.value)}
-            placeholder="e.g. 3"
+            placeholder={`Next: ${suggestedImagePage}`}
             className="w-full rounded-md border border-stone-300 px-2 py-1.5 text-sm"
           />
         </label>
@@ -243,7 +309,7 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
 
       <div className="mb-4 grid gap-3 rounded-lg border border-dashed border-stone-300 bg-white p-4 sm:grid-cols-4">
         <p className="sm:col-span-4 text-xs font-medium text-stone-600">
-          Batch upload — select multiple files; each becomes the next page number.
+          Optional batch upload — select multiple files at once; each becomes the next page number.
         </p>
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-stone-600">Batch type</span>
@@ -308,6 +374,7 @@ export function SourceDocumentsPanel({ sourceId, documents, onChange }: Props) {
                 min={1}
                 value={textPage}
                 onChange={(e) => setTextPage(e.target.value)}
+                placeholder={textKind === "OCR" ? `Next: ${suggestedOcrPage}` : undefined}
                 className="w-full rounded-md border border-stone-300 px-3 py-2 text-sm"
               />
             </label>
